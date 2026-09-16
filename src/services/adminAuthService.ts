@@ -54,23 +54,49 @@ export const adminAuthService = {
       }
 
       // 2. Verify admin privilege
-      const userRole = data.user.user_metadata?.role || data.user.app_metadata?.role;
-      let isAdmin = userRole === 'admin';
+      let adminFullName = data.user.user_metadata?.full_name || 'Central Administrator';
 
-      // Check profiles table if role is not directly in metadata
+      // Check user metadata and app metadata case-insensitively
+      const metaRole = (
+        data.user.user_metadata?.role ||
+        data.user.app_metadata?.role ||
+        (data.user as any).role ||
+        ''
+      ).toString().trim().toLowerCase();
+      let isAdmin = metaRole === 'admin';
+
+      // Check database via PostgreSQL RPC is_admin() (SECURITY DEFINER, queries profiles.role for auth.uid())
       if (!isAdmin) {
         try {
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('role')
-            .eq('id', data.user.id)
-            .maybeSingle();
-
-          if (profile?.role === 'admin') {
+          const { data: rpcIsAdmin, error: rpcErr } = await supabase.rpc('is_admin');
+          if (!rpcErr && rpcIsAdmin === true) {
             isAdmin = true;
           }
         } catch {
-          // If profiles table query fails or is not yet created
+          // If RPC invocation encounters an error, proceed to direct profile query
+        }
+      }
+
+      // Check profiles table directly by authenticated user ID
+      if (!isAdmin || adminFullName === 'Central Administrator') {
+        try {
+          const { data: profile, error: profileErr } = await supabase
+            .from('profiles')
+            .select('full_name, role')
+            .eq('id', data.user.id)
+            .maybeSingle();
+
+          if (!profileErr && profile) {
+            if (profile.full_name) {
+              adminFullName = profile.full_name;
+            }
+            const roleStr = (profile.role || '').toString().trim().toLowerCase();
+            if (roleStr === 'admin') {
+              isAdmin = true;
+            }
+          }
+        } catch {
+          // If direct profiles table query fails
         }
       }
 
@@ -85,7 +111,7 @@ export const adminAuthService = {
 
       const adminUser: Partial<User> = {
         id: data.user.id,
-        fullName: data.user.user_metadata?.full_name || 'Central Administrator',
+        fullName: adminFullName,
         email: cleanEmail,
         role: 'admin',
         accountStatus: 'active'
