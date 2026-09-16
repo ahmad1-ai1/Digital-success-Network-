@@ -1,3 +1,4 @@
+```ts
 import { supabase } from '../lib/supabase';
 import { paymentProofFromDb } from '../lib/supabaseAdapters';
 import { devStore } from '../store/devStore';
@@ -5,9 +6,12 @@ import { PaymentProof, PaymentMethod } from '../types';
 
 export const paymentService = {
   getProofs(userId: string): PaymentProof[] {
-    return devStore.getData().paymentProofs.filter(p => p.userId === userId).sort((a, b) =>
-      new Date(b.dateSubmitted).getTime() - new Date(a.dateSubmitted).getTime()
-    );
+    return devStore.getData().paymentProofs
+      .filter(p => p.userId === userId)
+      .sort((a, b) =>
+        new Date(b.dateSubmitted).getTime() -
+        new Date(a.dateSubmitted).getTime()
+      );
   },
 
   getProofsByUser(userId: string): PaymentProof[] {
@@ -16,7 +20,8 @@ export const paymentService = {
 
   getAllProofs(): PaymentProof[] {
     return [...devStore.getData().paymentProofs].sort((a, b) =>
-      new Date(b.dateSubmitted).getTime() - new Date(a.dateSubmitted).getTime()
+      new Date(b.dateSubmitted).getTime() -
+      new Date(a.dateSubmitted).getTime()
     );
   },
 
@@ -30,16 +35,21 @@ export const paymentService = {
 
       if (!error && data) {
         const proofs = data.map(paymentProofFromDb);
+
         devStore.save(db => {
-          // Merge into devStore
-          const otherProofs = db.paymentProofs.filter(p => p.userId !== userId);
+          const otherProofs = db.paymentProofs.filter(
+            p => p.userId !== userId
+          );
+
           db.paymentProofs = [...proofs, ...otherProofs];
         });
+
         return proofs;
       }
     } catch (err) {
       console.warn('Error fetching proofs from Supabase:', err);
     }
+
     return this.getProofs(userId);
   },
 
@@ -74,9 +84,11 @@ export const paymentService = {
     if (typeof arg1 === 'object') {
       userId = arg1.userId;
       amount = arg1.amount;
-      paymentMethod = (arg1.paymentMethod as PaymentMethod) || 'JazzCash';
+      paymentMethod =
+        (arg1.paymentMethod as PaymentMethod) || 'JazzCash';
       transactionId = arg1.transactionId;
-      screenshotUrl = arg1.screenshotUrl || arg1.receiptUrl || '';
+      screenshotUrl =
+        arg1.screenshotUrl || arg1.receiptUrl || '';
       senderName = arg1.senderName || '';
       senderAccount = arg1.senderAccount || '';
       notes = arg1.notes || '';
@@ -90,19 +102,28 @@ export const paymentService = {
 
     const db = devStore.getData();
     const user = db.users.find(u => u.id === userId);
+
     if (!user) {
-      return { success: false, error: 'User not found.' };
+      return {
+        success: false,
+        error: 'User not found.'
+      };
     }
 
     if (!transactionId.trim()) {
-      return { success: false, error: 'Please provide a valid Transaction ID / Reference.' };
+      return {
+        success: false,
+        error: 'Please provide a valid Transaction ID / Reference.'
+      };
     }
 
-    const finalAmount = amount > 0 ? amount : db.settings.activationFeePKR;
+    const finalAmount =
+      amount > 0 ? amount : db.settings.activationFeePKR;
+
     const cleanTxId = transactionId.trim();
 
-    // 1. Insert into Supabase
-    let dbId = `proof-${Date.now()}`;
+    // Insert directly into Supabase.
+    // Do NOT silently fall back to local storage if this fails.
     try {
       const { data, error } = await supabase
         .from('payment_proofs')
@@ -122,46 +143,78 @@ export const paymentService = {
         .select()
         .single();
 
-      if (!error && data) {
-        dbId = data.id;
-      }
-    } catch (err) {
-      console.warn('Could not insert payment proof to Supabase:', err);
-    }
+      if (error) {
+        console.error(
+          'Payment proof Supabase insert failed:',
+          error
+        );
 
-    const proof: PaymentProof = {
-      id: dbId,
-      userId,
-      userFullName: user.fullName,
-      userEmail: user.email,
-      amount: finalAmount,
-      paymentMethod,
-      transactionId: cleanTxId,
-      screenshotUrl: screenshotUrl || '',
-      receiptUrl: screenshotUrl || undefined,
-      senderName: senderName || undefined,
-      senderAccount: senderAccount || undefined,
-      notes: notes || undefined,
-      dateSubmitted: new Date().toISOString(),
-      status: 'pending'
-    };
-
-    devStore.save(data => {
-      data.paymentProofs.unshift(proof);
-      if (data.profiles[userId]) {
-        data.profiles[userId].paymentProofStatus = 'pending';
+        return {
+          success: false,
+          error: error.message || 'Failed to submit payment proof.'
+        };
       }
-      data.notifications.push({
-        id: `notif-${Date.now()}`,
-        userId,
-        title: 'Payment Proof Submitted',
-        message: `Your activation proof of ${proof.amount} PKR via ${paymentMethod} is received. Central Operations will review shortly.`,
-        type: 'account_activated',
-        read: false,
-        createdAt: new Date().toISOString()
+
+      if (!data) {
+        return {
+          success: false,
+          error: 'Payment proof was not saved.'
+        };
+      }
+
+      const proof = paymentProofFromDb(data);
+
+      // Keep local store synchronized only after Supabase succeeds.
+      devStore.save(store => {
+        store.paymentProofs = [
+          proof,
+          ...store.paymentProofs.filter(p => p.id !== proof.id)
+        ];
+
+        if (store.profiles[userId]) {
+          store.profiles[userId].paymentProofStatus = 'pending';
+        }
+
+        store.notifications.push({
+          id: `notif-${Date.now()}`,
+          userId,
+          title: 'Payment Proof Submitted',
+          message: `Your activation proof of ${proof.amount} PKR via ${paymentMethod} is received. Central Operations will review shortly.`,
+          type: 'account_activated',
+          read: false,
+          createdAt: new Date().toISOString()
+        });
       });
-    });
 
-    return { success: true, proof };
+      return {
+        success: true,
+        proof
+      };
+    } catch (err) {
+      console.error(
+        'Unexpected payment proof submission error:',
+        err
+      );
+
+      return {
+        success: false,
+        error:
+          err instanceof Error
+            ? err.message
+            : 'Failed to submit payment proof.'
+      };
+    }
   }
 };
+```
+
+### Ab important
+
+GitHub mein commit kar do:
+
+**Commit message:**
+`Fix payment proof Supabase submission`
+
+Phir Vercel deploy hone do.
+
+**Uske baad payment proof submit karke dekhna.** Agar Supabase insert ab bhi fail hua, is baar portal **actual error dikhayega** — aur wahi error humein exact problem bata dega.
