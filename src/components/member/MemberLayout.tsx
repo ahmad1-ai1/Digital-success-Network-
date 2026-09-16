@@ -72,9 +72,9 @@ export const MemberLayout: React.FC<{ children: React.ReactNode }> = ({ children
   ];
 
   const handleCopyRef = () => {
-    const fullLink = `${window.location.origin}/#/?ref=${user.referralCode}`;
+    const fullLink = `${window.location.origin}/register?ref=${encodeURIComponent(user.referralCode)}`;
     navigator.clipboard.writeText(fullLink);
-    success(`Referral link copied to clipboard: ${user.referralCode}`);
+    success(`Referral link copied to clipboard: ${fullLink}`);
   };
 
   const handleNav = (path: string) => {

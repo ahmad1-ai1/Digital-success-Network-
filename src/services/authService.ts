@@ -44,8 +44,44 @@ export const authService = {
         .eq('id', userId)
         .maybeSingle();
 
-      if (error) {
-        console.warn('Could not fetch Supabase profile:', error.message);
+      if (error || !data) {
+        if (error) console.warn('Could not fetch Supabase profile:', error.message);
+        
+        // Fallback: check existing local profile from devStore and verify against Supabase payment_proofs
+        const existingProfile = devStore.getData().profiles[userId];
+        try {
+          const { data: userProofs } = await supabase
+            .from('payment_proofs')
+            .select('*')
+            .eq('user_id', userId)
+            .order('date_submitted', { ascending: false });
+
+          const hasApproved = userProofs?.some(p => p.status === 'approved' || p.status === 'verified');
+          const hasRejected = userProofs?.some(p => p.status === 'rejected');
+
+          if (existingProfile) {
+            if (hasApproved) {
+              existingProfile.accountStatus = 'active';
+              existingProfile.paymentProofStatus = 'approved';
+            } else if (hasRejected && existingProfile.accountStatus !== 'active') {
+              existingProfile.paymentProofStatus = 'rejected';
+            }
+            devStore.save(db => {
+              db.profiles[userId] = existingProfile;
+              const u = db.users.find(usr => usr.id === userId);
+              if (u && hasApproved) {
+                u.accountStatus = 'active';
+              }
+              if (userProofs && userProofs.length > 0) {
+                db.paymentProofs = userProofs.map(paymentProofFromDb);
+              }
+            });
+            return existingProfile;
+          }
+        } catch (proofErr) {
+          console.warn('Error fetching payment proofs in fallback:', proofErr);
+          if (existingProfile) return existingProfile;
+        }
         return null;
       }
 
@@ -116,7 +152,14 @@ export const authService = {
           }
 
           if (proofsRes.status === 'fulfilled' && proofsRes.value.data) {
-            db.paymentProofs = proofsRes.value.data.map(paymentProofFromDb);
+            const mappedProofs = proofsRes.value.data.map(paymentProofFromDb);
+            db.paymentProofs = mappedProofs;
+            const hasApproved = mappedProofs.some(p => p.userId === user.id && (p.status === 'approved' || (p.status as string) === 'verified'));
+            if (hasApproved) {
+              profile.accountStatus = 'active';
+              profile.paymentProofStatus = 'approved';
+              user.accountStatus = 'active';
+            }
           }
           if (kycRes.status === 'fulfilled' && kycRes.value.data) {
             db.kycRecords = kycRes.value.data.map(kycFromDb);
@@ -220,36 +263,59 @@ export const authService = {
         return { success: true, user: appUser };
       }
 
-      // 3. Fallback: If profile row was not yet created by trigger, create from metadata
+      // 3. Fallback: If profile row was not directly readable, reconcile with existing state and proofs
       const isAdminEmail = cleanEmail === 'admin@digitalsuccessnetwork.pk';
+      const existingProfile = devStore.getData().profiles[data.user.id];
+      const existingUser = devStore.getData().users.find(u => u.id === data.user.id);
+
+      let isProofApproved = false;
+      try {
+        const { data: userProofs } = await supabase
+          .from('payment_proofs')
+          .select('status')
+          .eq('user_id', data.user.id);
+        isProofApproved = userProofs?.some(p => p.status === 'approved' || p.status === 'verified') || false;
+      } catch {
+        // ignore
+      }
+
+      const resolvedStatus = isProofApproved
+        ? 'active'
+        : (existingProfile?.accountStatus || existingUser?.accountStatus || 'pending_activation');
+      const resolvedProofStatus = isProofApproved
+        ? 'approved'
+        : (existingProfile?.paymentProofStatus || 'pending');
+
       const fallbackUser: User = {
         id: data.user.id,
-        fullName: data.user.user_metadata?.full_name || cleanEmail.split('@')[0],
+        fullName: existingUser?.fullName || data.user.user_metadata?.full_name || cleanEmail.split('@')[0],
         email: cleanEmail,
-        phone: data.user.user_metadata?.phone || '',
-        role: isAdminEmail ? 'admin' : ((data.user.user_metadata?.role as any) || 'member'),
+        phone: existingUser?.phone || data.user.user_metadata?.phone || '',
+        role: isAdminEmail ? 'admin' : (existingUser?.role || (data.user.user_metadata?.role as any) || 'member'),
         referralCode:
+          existingUser?.referralCode ||
+          data.user.user_metadata?.member_referral_code ||
           data.user.user_metadata?.referral_code ||
           `DSN-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
-        sponsorId: data.user.user_metadata?.sponsor_id || null,
-        sponsorCode: data.user.user_metadata?.sponsor_code || null,
-        accountStatus: 'pending_activation',
+        sponsorId: existingUser?.sponsorId || data.user.user_metadata?.sponsor_id || null,
+        sponsorCode: existingUser?.sponsorCode || data.user.user_metadata?.sponsor_code || null,
+        accountStatus: resolvedStatus,
         createdAt: data.user.created_at,
         updatedAt: new Date().toISOString()
       };
 
       const fallbackProfile: Profile = {
         ...fallbackUser,
-        currentRank: 'Starter',
-        currentPoints: 0,
-        availableBalance: 0,
-        totalEarnings: 0,
-        pendingWithdrawals: 0,
-        spinCredits: 0,
-        directTeamCount: 0,
-        totalTeamCount: 0,
-        kycStatus: 'not_submitted',
-        paymentProofStatus: 'pending'
+        currentRank: existingProfile?.currentRank || 'Starter',
+        currentPoints: existingProfile?.currentPoints || 0,
+        availableBalance: existingProfile?.availableBalance || 0,
+        totalEarnings: existingProfile?.totalEarnings || 0,
+        pendingWithdrawals: existingProfile?.pendingWithdrawals || 0,
+        spinCredits: existingProfile?.spinCredits || 0,
+        directTeamCount: existingProfile?.directTeamCount || 0,
+        totalTeamCount: existingProfile?.totalTeamCount || 0,
+        kycStatus: existingProfile?.kycStatus || 'not_submitted',
+        paymentProofStatus: resolvedProofStatus
       };
 
       devStore.save(db => {
@@ -317,6 +383,9 @@ export const authService = {
           if (localSponsor) {
             sponsorId = localSponsor.id;
             sponsorCode = localSponsor.referralCode;
+          } else if (/^DSN-[A-Z0-9_-]{2,15}$/i.test(code) || code.length >= 3) {
+            // Valid referral code format: accept it so database trigger handle_new_user resolves it
+            sponsorCode = code;
           } else {
             return {
               success: false,
@@ -326,6 +395,9 @@ export const authService = {
         }
       } catch (err) {
         console.warn('Error checking sponsor referral code:', err);
+        if (/^DSN-[A-Z0-9_-]{2,15}$/i.test(code) || code.length >= 3) {
+          sponsorCode = code;
+        }
       }
     }
 
@@ -333,7 +405,8 @@ export const authService = {
 
     try {
       // Sign up with Supabase Auth
-      // Explicitly store role as 'member' - public registration CANNOT create admin!
+      // Note: trigger handle_new_user reads new.raw_user_meta_data->>'referral_code' to find the sponsor!
+      // Therefore, pass the sponsorCode in referral_code metadata so the trigger finds the sponsor.
       const { data, error } = await supabase.auth.signUp({
         email: cleanEmail,
         password,
@@ -342,9 +415,10 @@ export const authService = {
             full_name: cleanName,
             phone: cleanPhone,
             role: 'member',
-            referral_code: newReferralCode,
-            sponsor_id: sponsorId,
-            sponsor_code: sponsorCode
+            referral_code: sponsorCode || undefined,
+            sponsor_code: sponsorCode || undefined,
+            sponsor_id: sponsorId || undefined,
+            member_referral_code: newReferralCode
           }
         }
       });

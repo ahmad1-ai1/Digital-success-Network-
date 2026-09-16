@@ -33,13 +33,13 @@ export const DashboardOverview: React.FC = () => {
   const rankProgress = rankService.getRankProgress(profile.currentPoints);
 
   const handleCopyLink = () => {
-    const fullLink = `${window.location.origin}/#/?ref=${user.referralCode}`;
+    const fullLink = `${window.location.origin}/register?ref=${encodeURIComponent(user.referralCode)}`;
     navigator.clipboard.writeText(fullLink);
     success(`Referral link copied: ${fullLink}`);
   };
 
   const handleWhatsAppShare = () => {
-    const fullLink = `${window.location.origin}/#/?ref=${user.referralCode}`;
+    const fullLink = `${window.location.origin}/register?ref=${encodeURIComponent(user.referralCode)}`;
     const text = encodeURIComponent(
       `Assalam o Alaikum! Join Digital Success Network (DSN) - "Team Se Taraqqi Tak". Register here: ${fullLink}`
     );

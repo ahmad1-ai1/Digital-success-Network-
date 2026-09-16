@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { paymentService } from '../../services';
@@ -29,6 +29,12 @@ export const PaymentProofView: React.FC = () => {
   const [receiptImage, setReceiptImage] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (user?.id) {
+      paymentService.fetchProofs(user.id);
+    }
+  }, [user?.id]);
 
   if (!user || !profile) return null;
 

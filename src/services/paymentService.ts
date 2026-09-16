@@ -5,15 +5,9 @@ import { PaymentProof, PaymentMethod } from '../types';
 
 export const paymentService = {
   getProofs(userId: string): PaymentProof[] {
-    return devStore
-      .getData()
-      .paymentProofs
-      .filter((p) => p.userId === userId)
-      .sort(
-        (a, b) =>
-          new Date(b.dateSubmitted).getTime() -
-          new Date(a.dateSubmitted).getTime()
-      );
+    return devStore.getData().paymentProofs.filter(p => p.userId === userId).sort((a, b) =>
+      new Date(b.dateSubmitted).getTime() - new Date(a.dateSubmitted).getTime()
+    );
   },
 
   getProofsByUser(userId: string): PaymentProof[] {
@@ -21,10 +15,8 @@ export const paymentService = {
   },
 
   getAllProofs(): PaymentProof[] {
-    return [...devStore.getData().paymentProofs].sort(
-      (a, b) =>
-        new Date(b.dateSubmitted).getTime() -
-        new Date(a.dateSubmitted).getTime()
+    return [...devStore.getData().paymentProofs].sort((a, b) =>
+      new Date(b.dateSubmitted).getTime() - new Date(a.dateSubmitted).getTime()
     );
   },
 
@@ -38,25 +30,16 @@ export const paymentService = {
 
       if (!error && data) {
         const proofs = data.map(paymentProofFromDb);
-
-        devStore.save((db) => {
-          const otherProofs = db.paymentProofs.filter(
-            (p) => p.userId !== userId
-          );
-
+        devStore.save(db => {
+          // Merge into devStore
+          const otherProofs = db.paymentProofs.filter(p => p.userId !== userId);
           db.paymentProofs = [...proofs, ...otherProofs];
         });
-
         return proofs;
-      }
-
-      if (error) {
-        console.warn('Error fetching proofs from Supabase:', error);
       }
     } catch (err) {
       console.warn('Error fetching proofs from Supabase:', err);
     }
-
     return this.getProofs(userId);
   },
 
@@ -78,11 +61,7 @@ export const paymentService = {
     arg3?: PaymentMethod,
     arg4?: string,
     arg5?: string
-  ): Promise<{
-    success: boolean;
-    proof?: PaymentProof;
-    error?: string;
-  }> {
+  ): Promise<{ success: boolean; proof?: PaymentProof; error?: string }> {
     let userId = '';
     let amount = 0;
     let paymentMethod: PaymentMethod = 'JazzCash';
@@ -95,11 +74,9 @@ export const paymentService = {
     if (typeof arg1 === 'object') {
       userId = arg1.userId;
       amount = arg1.amount;
-      paymentMethod =
-        (arg1.paymentMethod as PaymentMethod) || 'JazzCash';
+      paymentMethod = (arg1.paymentMethod as PaymentMethod) || 'JazzCash';
       transactionId = arg1.transactionId;
-      screenshotUrl =
-        arg1.screenshotUrl || arg1.receiptUrl || '';
+      screenshotUrl = arg1.screenshotUrl || arg1.receiptUrl || '';
       senderName = arg1.senderName || '';
       senderAccount = arg1.senderAccount || '';
       notes = arg1.notes || '';
@@ -111,109 +88,134 @@ export const paymentService = {
       screenshotUrl = arg5 || '';
     }
 
+    if (!userId) {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        userId = sessionData?.session?.user?.id || '';
+      } catch {
+        // ignore
+      }
+    }
+
+    if (!userId) {
+      return { success: false, error: 'User session not found. Please log in again.' };
+    }
+
     const db = devStore.getData();
-    const user = db.users.find((u) => u.id === userId);
+    let user = db.users.find(u => u.id === userId);
+    let userFullName = user?.fullName;
+    let userEmail = user?.email;
 
-    if (!user) {
-      return {
-        success: false,
-        error: 'User not found.',
-      };
-    }
-
-    if (!transactionId.trim()) {
-      return {
-        success: false,
-        error: 'Please provide a valid Transaction ID / Reference.',
-      };
-    }
-
-    const finalAmount =
-      amount > 0 ? amount : db.settings.activationFeePKR;
-
-    const cleanTxId = transactionId.trim();
-
-    try {
-      const { data, error } = await supabase
-        .from('payment_proofs')
-        .insert({
-          user_id: userId,
-          user_full_name: user.fullName,
-          user_email: user.email,
-          amount: finalAmount,
-          payment_method: paymentMethod,
-          transaction_id: cleanTxId,
-          screenshot_url: screenshotUrl || '',
-          sender_name: senderName || null,
-          sender_account: senderAccount || null,
-          notes: notes || null,
-          status: 'pending',
-        })
-        .select()
-        .single();
-
-      if (error) {
-        console.error(
-          'Payment proof Supabase insert failed:',
-          error
-        );
-
-        return {
-          success: false,
-          error:
-            error.message || 'Failed to submit payment proof.',
-        };
-      }
-
-      if (!data) {
-        return {
-          success: false,
-          error: 'Payment proof was not saved.',
-        };
-      }
-
-      const proof = paymentProofFromDb(data);
-
-      devStore.save((store) => {
-        store.paymentProofs = [
-          proof,
-          ...store.paymentProofs.filter(
-            (p) => p.id !== proof.id
-          ),
-        ];
-
-        if (store.profiles[userId]) {
-          store.profiles[userId].paymentProofStatus = 'pending';
+    if (!userFullName || !userEmail) {
+      try {
+        const { data: prof, error: profErr } = await supabase
+          .from('profiles')
+          .select('full_name, email')
+          .eq('id', userId)
+          .maybeSingle();
+        if (!profErr && prof) {
+          userFullName = prof.full_name || 'Member';
+          userEmail = prof.email || '';
         }
+      } catch (err) {
+        console.warn('Could not query profile for submitProof:', err);
+      }
+    }
 
-        store.notifications.push({
-          id: `notif-${Date.now()}`,
-          userId,
-          title: 'Payment Proof Submitted',
-          message: `Your activation proof of ${proof.amount} PKR via ${paymentMethod} is received. Central Operations will review shortly.`,
-          type: 'account_activated',
-          read: false,
-          createdAt: new Date().toISOString(),
-        });
-      });
+    if (!userFullName) userFullName = 'Member';
+    if (!userEmail) userEmail = '';
 
-      return {
-        success: true,
-        proof,
-      };
-    } catch (err) {
-      console.error(
-        'Unexpected payment proof submission error:',
-        err
-      );
+    if (!transactionId || !transactionId.trim()) {
+      return { success: false, error: 'Please provide a valid Transaction ID / Reference.' };
+    }
 
+    const finalAmount = amount > 0 ? amount : 1300;
+    const cleanTxId = transactionId.trim().toUpperCase();
+
+    // 1. Insert into Supabase public.payment_proofs
+    const insertPayload = {
+      user_id: userId,
+      user_full_name: userFullName,
+      user_email: userEmail,
+      amount: finalAmount,
+      payment_method: paymentMethod,
+      transaction_id: cleanTxId,
+      screenshot_url: screenshotUrl || 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=400',
+      sender_name: senderName || null,
+      sender_account: senderAccount || null,
+      notes: notes || null,
+      status: 'pending'
+    };
+
+    const { data, error } = await supabase
+      .from('payment_proofs')
+      .insert(insertPayload)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Could not insert payment proof into Supabase:', error);
       return {
         success: false,
-        error:
-          err instanceof Error
-            ? err.message
-            : 'Failed to submit payment proof.',
+        error: error.message || 'Failed to submit payment proof to database.'
       };
     }
-  },
+
+    if (!data) {
+      return {
+        success: false,
+        error: 'Database failed to return the created payment proof record.'
+      };
+    }
+
+    const dbId = data.id;
+
+    // 2. Ensure profile record in Supabase reflects pending payment proof status
+    const { error: profUpdateErr } = await supabase
+      .from('profiles')
+      .update({
+        payment_proof_status: 'pending',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', userId);
+
+    if (profUpdateErr) {
+      console.warn('Could not update profile payment_proof_status in Supabase:', profUpdateErr);
+    }
+
+    const proof: PaymentProof = {
+      id: dbId,
+      userId,
+      userFullName,
+      userEmail,
+      amount: finalAmount,
+      paymentMethod,
+      transactionId: cleanTxId,
+      screenshotUrl: screenshotUrl || 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=400',
+      receiptUrl: screenshotUrl || undefined,
+      senderName: senderName || undefined,
+      senderAccount: senderAccount || undefined,
+      notes: notes || undefined,
+      dateSubmitted: data.date_submitted || new Date().toISOString(),
+      status: 'pending'
+    };
+
+    devStore.save(d => {
+      d.paymentProofs.unshift(proof);
+      if (d.profiles[userId]) {
+        d.profiles[userId].paymentProofStatus = 'pending';
+      }
+      d.notifications.push({
+        id: `notif-${Date.now()}`,
+        userId,
+        title: 'Payment Proof Submitted',
+        message: `Your activation proof of ${proof.amount} PKR via ${paymentMethod} is received. Central Operations will review shortly.`,
+        type: 'account_activated',
+        read: false,
+        createdAt: new Date().toISOString()
+      });
+    });
+
+    return { success: true, proof };
+  }
 };

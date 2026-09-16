@@ -1,5 +1,6 @@
 import { devStore } from '../store/devStore';
 import { adminService } from './adminService';
+import { adminAuthService } from './adminAuthService';
 import { supabase } from '../lib/supabase';
 import { PayoutMethod, PaymentMethod } from '../types';
 
@@ -199,8 +200,56 @@ class AdminPortalService {
       this.isLoadedFromSupabase = true;
       this.persist();
     } catch (err) {
-      console.warn('Supabase data synchronization:', err);
+      console.warn('Supabase data synchronization error:', err);
     }
+  }
+
+  private async resolveAdminId(): Promise<string | null> {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    // 1. Check stored admin from adminAuthService
+    const storedAdmin = adminAuthService.getCurrentAdmin();
+    if (storedAdmin?.id && uuidRegex.test(storedAdmin.id)) {
+      return storedAdmin.id;
+    }
+
+    // 2. Check active Supabase Auth session
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (sessionData?.session?.user?.id && uuidRegex.test(sessionData.session.user.id)) {
+        return sessionData.session.user.id;
+      }
+    } catch (err) {
+      console.warn('resolveAdminId: error checking session:', err);
+    }
+
+    // 3. Check getUser
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      if (userData?.user?.id && uuidRegex.test(userData.user.id)) {
+        return userData.user.id;
+      }
+    } catch (err) {
+      console.warn('resolveAdminId: error checking auth user:', err);
+    }
+
+    // 4. Query profiles table for an admin profile
+    try {
+      const { data: adminProf } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('role', 'admin')
+        .limit(1)
+        .maybeSingle();
+
+      if (adminProf?.id && uuidRegex.test(adminProf.id)) {
+        return adminProf.id;
+      }
+    } catch (err) {
+      console.warn('resolveAdminId: error querying admin profile fallback:', err);
+    }
+
+    return null;
   }
 
   private persist() {
@@ -247,10 +296,11 @@ class AdminPortalService {
 
   // Deposits
   getDeposits(statusFilter?: 'all' | 'pending' | 'approved' | 'rejected'): DepositItem[] {
+    const list = [...this.deposits];
     if (!statusFilter || statusFilter === 'all') {
-      return [...this.deposits];
+      return list;
     }
-    return this.deposits.filter(d => d.status === statusFilter);
+    return list.filter(d => d.status === statusFilter);
   }
 
   getDepositById(id: string): DepositItem | undefined {
@@ -258,119 +308,200 @@ class AdminPortalService {
   }
 
   async approveDeposit(id: string, actorName = 'Central Admin'): Promise<{ success: boolean; error?: string }> {
-    const item = this.deposits.find(d => d.id === id);
-    if (!item) return { success: false, error: 'Deposit request not found.' };
-
-    item.status = 'approved';
-    item.reviewedAt = new Date().toISOString();
-
-    // Persist to Supabase
-    try {
-      await supabase
-        .from('payment_proofs')
-        .update({
-          status: 'verified',
-          reviewed_at: item.reviewedAt,
-          reviewed_by: actorName
-        })
-        .eq('id', id);
-
-      if (item.userId) {
-        await supabase
-          .from('profiles')
-          .update({
-            account_status: 'active',
-            payment_proof_status: 'approved'
-          })
-          .eq('id', item.userId);
-      }
-    } catch (e) {
-      console.warn('Supabase status update error:', e);
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!id || !uuidRegex.test(id)) {
+      return { success: false, error: 'Invalid payment proof ID: Must be a valid UUID.' };
     }
 
-    // Add activity
+    // 1. Resolve administrator UUID
+    const currentAdminId = await this.resolveAdminId();
+    if (!currentAdminId) {
+      return {
+        success: false,
+        error: 'Unauthorized: Valid administrator UUID is required to execute database activation.'
+      };
+    }
+
+    // 2. Call existing Supabase RPC: admin_approve_payment(p_proof_id, p_actor_id)
+    const { data: rpcData, error: rpcErr } = await supabase.rpc('admin_approve_payment', {
+      p_proof_id: id,
+      p_actor_id: currentAdminId
+    });
+
+    if (rpcErr) {
+      console.error('Supabase RPC admin_approve_payment failed:', rpcErr);
+      return {
+        success: false,
+        error: rpcErr.message || 'Database approval RPC failed.'
+      };
+    }
+
+    const rpcResult = rpcData as { success?: boolean; error?: string; message?: string } | null;
+    if (!rpcResult || rpcResult.success === false) {
+      const errMsg = rpcResult?.error || 'Database rejected payment proof approval.';
+      console.error('admin_approve_payment validation error:', errMsg);
+      return {
+        success: false,
+        error: errMsg
+      };
+    }
+
+    // 3. ONLY after database success, update local state
+    let item = this.deposits.find(d => d.id === id);
+    const nowIso = new Date().toISOString();
+    if (item) {
+      item.status = 'approved';
+      item.reviewedAt = nowIso;
+    }
+
     this.activities.unshift({
       id: `act-${Date.now()}`,
       type: 'deposit_approved',
       title: 'Payment approved',
-      description: `Payment of ${item.amount.toLocaleString()} PKR approved for ${item.userName} (Trx: ${item.transactionId})`,
-      amount: item.amount,
-      targetId: item.id,
-      timestamp: new Date().toISOString(),
-      userFullName: item.userName
+      description: `Payment of ${(item?.amount || 1300).toLocaleString()} PKR approved for ${item?.userName || 'Member'} (Trx: ${item?.transactionId || id})`,
+      amount: item?.amount || 1300,
+      targetId: id,
+      timestamp: nowIso,
+      userFullName: item?.userName || 'Member'
     });
 
-    // Add notification
     this.notifications.unshift({
       id: `notif-${Date.now()}`,
       title: 'Payment approved',
-      message: `Deposit of ${item.amount} PKR for ${item.userName} was verified and approved by ${actorName}.`,
+      message: `Deposit of ${item?.amount || 1300} PKR for ${item?.userName || 'Member'} was verified and approved by ${actorName}.`,
       type: 'deposit',
       read: false,
-      createdAt: new Date().toISOString(),
+      createdAt: nowIso,
       actionUrl: '/admin/deposits'
     });
 
     this.persist();
+
+    // Sync to devStore
+    devStore.save(db => {
+      if (item?.userId) {
+        if (db.profiles[item.userId]) {
+          db.profiles[item.userId].accountStatus = 'active';
+          db.profiles[item.userId].paymentProofStatus = 'approved';
+        }
+        const u = db.users.find(usr => usr.id === item.userId);
+        if (u) {
+          u.accountStatus = 'active';
+          u.updatedAt = nowIso;
+        }
+      }
+      const p = db.paymentProofs.find(proof => proof.id === id);
+      if (p) {
+        p.status = 'approved';
+        p.reviewedAt = nowIso;
+        p.reviewedBy = currentAdminId;
+      }
+    });
+
     return { success: true };
   }
 
   async rejectDeposit(id: string, reason: string, actorName = 'Central Admin'): Promise<{ success: boolean; error?: string }> {
-    const item = this.deposits.find(d => d.id === id);
-    if (!item) return { success: false, error: 'Deposit request not found.' };
-
-    item.status = 'rejected';
-    item.rejectionReason = reason;
-    item.reviewedAt = new Date().toISOString();
-
-    // Persist to Supabase
-    try {
-      await supabase
-        .from('payment_proofs')
-        .update({
-          status: 'rejected',
-          rejection_reason: reason,
-          reviewed_at: item.reviewedAt,
-          reviewed_by: actorName
-        })
-        .eq('id', id);
-
-      if (item.userId) {
-        await supabase
-          .from('profiles')
-          .update({
-            payment_proof_status: 'rejected'
-          })
-          .eq('id', item.userId);
-      }
-    } catch (e) {
-      console.warn('Supabase reject status error:', e);
+    if (!reason || !reason.trim()) {
+      return { success: false, error: 'Please specify a rejection reason for the member.' };
     }
 
-    // Add activity
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!id || !uuidRegex.test(id)) {
+      return { success: false, error: 'Invalid payment proof ID: Must be a valid UUID.' };
+    }
+
+    // 1. Resolve administrator UUID
+    const currentAdminId = await this.resolveAdminId();
+    if (!currentAdminId) {
+      return {
+        success: false,
+        error: 'Unauthorized: Valid administrator UUID is required to reject payment proof.'
+      };
+    }
+
+    const item = this.deposits.find(d => d.id === id);
+    const userId = item?.userId;
+    const nowIso = new Date().toISOString();
+
+    // 2. Update public.payment_proofs in Supabase
+    const { error: proofErr } = await supabase
+      .from('payment_proofs')
+      .update({
+        status: 'rejected',
+        rejection_reason: reason.trim(),
+        reviewed_at: nowIso,
+        reviewed_by: currentAdminId
+      })
+      .eq('id', id);
+
+    if (proofErr) {
+      console.error('Supabase error rejecting payment_proof:', proofErr);
+      return {
+        success: false,
+        error: proofErr.message || 'Database update failed for payment proof rejection.'
+      };
+    }
+
+    // 3. Update public.profiles in Supabase
+    if (userId) {
+      const { error: profErr } = await supabase
+        .from('profiles')
+        .update({
+          payment_proof_status: 'rejected',
+          updated_at: nowIso
+        })
+        .eq('id', userId);
+
+      if (profErr) {
+        console.warn('Could not update profile payment_proof_status on rejection:', profErr);
+      }
+    }
+
+    // 4. ONLY after database success, update local state
+    if (item) {
+      item.status = 'rejected';
+      item.rejectionReason = reason.trim();
+      item.reviewedAt = nowIso;
+    }
+
     this.activities.unshift({
       id: `act-${Date.now()}`,
       type: 'deposit_rejected',
       title: 'Payment rejected',
-      description: `Deposit rejected for ${item.userName}. Reason: ${reason}`,
-      amount: item.amount,
-      targetId: item.id,
-      timestamp: new Date().toISOString(),
-      userFullName: item.userName
+      description: `Deposit rejected for ${item?.userName || 'Member'}. Reason: ${reason.trim()}`,
+      amount: item?.amount || 1300,
+      targetId: id,
+      timestamp: nowIso,
+      userFullName: item?.userName || 'Member'
     });
 
-    // Add notification
     this.notifications.unshift({
       id: `notif-${Date.now()}`,
       title: 'Payment rejected',
-      message: `Deposit for ${item.userName} was rejected: ${reason}`,
+      message: `Deposit for ${item?.userName || 'Member'} was rejected: ${reason.trim()}`,
       type: 'deposit',
       read: false,
-      createdAt: new Date().toISOString(),
+      createdAt: nowIso,
       actionUrl: '/admin/deposits'
     });
 
     this.persist();
+
+    // Sync to devStore
+    devStore.save(db => {
+      if (userId && db.profiles[userId]) {
+        db.profiles[userId].paymentProofStatus = 'rejected';
+      }
+      const p = db.paymentProofs.find(proof => proof.id === id);
+      if (p) {
+        p.status = 'rejected';
+        p.rejectionReason = reason.trim();
+        p.reviewedAt = nowIso;
+        p.reviewedBy = currentAdminId;
+      }
+    });
+
     return { success: true };
   }
 
@@ -390,23 +521,29 @@ class AdminPortalService {
     const item = this.withdrawals.find(w => w.id === id);
     if (!item) return { success: false, error: 'Withdrawal request not found.' };
 
-    item.status = 'approved';
-    item.processedAt = new Date().toISOString();
-    item.transactionRef = transactionRef;
+    const nowIso = new Date().toISOString();
 
     // Persist to Supabase
-    try {
-      await supabase
-        .from('withdrawals')
-        .update({
-          status: 'paid',
-          processed_at: item.processedAt,
-          remarks: `Ref: ${transactionRef}`
-        })
-        .eq('id', id);
-    } catch (e) {
-      console.warn('Supabase withdrawal approve error:', e);
+    const { error: wErr } = await supabase
+      .from('withdrawals')
+      .update({
+        status: 'paid',
+        processed_at: nowIso,
+        remarks: `Ref: ${transactionRef}`
+      })
+      .eq('id', id);
+
+    if (wErr) {
+      console.error('Supabase withdrawal approve error:', wErr);
+      return {
+        success: false,
+        error: wErr.message || 'Database update failed for withdrawal approval.'
+      };
     }
+
+    item.status = 'approved';
+    item.processedAt = nowIso;
+    item.transactionRef = transactionRef;
 
     // Add activity
     this.activities.unshift({
@@ -416,7 +553,7 @@ class AdminPortalService {
       description: `Disbursed ${item.netAmount.toLocaleString()} PKR to ${item.userName} via ${item.withdrawalMethod} (Ref: ${transactionRef})`,
       amount: item.grossAmount,
       targetId: item.id,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso,
       userFullName: item.userName
     });
 
@@ -427,7 +564,7 @@ class AdminPortalService {
       message: `Payout of ${item.netAmount} PKR to ${item.userName} (${item.withdrawalMethod}) confirmed.`,
       type: 'withdrawal',
       read: false,
-      createdAt: new Date().toISOString(),
+      createdAt: nowIso,
       actionUrl: '/admin/withdrawals'
     });
 
@@ -439,21 +576,27 @@ class AdminPortalService {
     const item = this.withdrawals.find(w => w.id === id);
     if (!item) return { success: false, error: 'Withdrawal request not found.' };
 
-    item.status = 'rejected';
-    item.rejectionReason = reason;
+    const nowIso = new Date().toISOString();
 
     // Persist to Supabase
-    try {
-      await supabase
-        .from('withdrawals')
-        .update({
-          status: 'rejected',
-          remarks: reason
-        })
-        .eq('id', id);
-    } catch (e) {
-      console.warn('Supabase withdrawal reject error:', e);
+    const { error: wErr } = await supabase
+      .from('withdrawals')
+      .update({
+        status: 'rejected',
+        remarks: reason
+      })
+      .eq('id', id);
+
+    if (wErr) {
+      console.error('Supabase withdrawal reject error:', wErr);
+      return {
+        success: false,
+        error: wErr.message || 'Database update failed for withdrawal rejection.'
+      };
     }
+
+    item.status = 'rejected';
+    item.rejectionReason = reason;
 
     // Add activity
     this.activities.unshift({
@@ -463,7 +606,7 @@ class AdminPortalService {
       description: `Withdrawal of ${item.grossAmount.toLocaleString()} PKR rejected for ${item.userName}. Reason: ${reason}`,
       amount: item.grossAmount,
       targetId: item.id,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso,
       userFullName: item.userName
     });
 
@@ -474,7 +617,7 @@ class AdminPortalService {
       message: `Withdrawal request for ${item.userName} was rejected (${reason}).`,
       type: 'withdrawal',
       read: false,
-      createdAt: new Date().toISOString(),
+      createdAt: nowIso,
       actionUrl: '/admin/withdrawals'
     });
 

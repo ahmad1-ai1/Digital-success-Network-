@@ -445,10 +445,50 @@ export const adminService = {
     if (result.success) {
       (async () => {
         try {
-          await supabase.rpc('admin_approve_payment', {
-            p_proof_id: proofId,
-            p_actor_id: actorId
-          });
+          const sessionRes = await supabase.auth.getSession();
+          const authAdminId = sessionRes.data.session?.user?.id;
+          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+          const validAdminId = (actorId && uuidRegex.test(actorId)) ? actorId : (authAdminId && uuidRegex.test(authAdminId) ? authAdminId : null);
+
+          let rpcSuccess = false;
+          if (validAdminId) {
+            const { data: rpcData, error: rpcErr } = await supabase.rpc('admin_approve_payment', {
+              p_proof_id: proofId,
+              p_actor_id: validAdminId
+            });
+            if (!rpcErr && (rpcData as any)?.success === true) rpcSuccess = true;
+          }
+
+          if (!rpcSuccess) {
+            const proofUpdates: any = {
+              status: 'approved',
+              reviewed_at: new Date().toISOString()
+            };
+            if (validAdminId) {
+              proofUpdates.reviewed_by = validAdminId;
+            }
+            await supabase.from('payment_proofs').update(proofUpdates).eq('id', proofId);
+
+            const proof = devStore.getData().paymentProofs.find(p => p.id === proofId);
+            if (proof?.userId) {
+              await supabase
+                .from('profiles')
+                .update({
+                  account_status: 'active',
+                  payment_proof_status: 'approved',
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', proof.userId);
+
+              await supabase
+                .from('referrals')
+                .update({
+                  status: 'active',
+                  activated_at: new Date().toISOString()
+                })
+                .eq('referred_user_id', proof.userId);
+            }
+          }
         } catch (err) {
           console.warn('Supabase admin_approve_payment call error:', err);
         }
@@ -519,15 +559,35 @@ export const adminService = {
     if (success) {
       (async () => {
         try {
+          const sessionRes = await supabase.auth.getSession();
+          const authAdminId = sessionRes.data.session?.user?.id;
+          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+          const validAdminId = (actorId && uuidRegex.test(actorId)) ? actorId : (authAdminId && uuidRegex.test(authAdminId) ? authAdminId : null);
+
+          const proofUpdates: any = {
+            status: 'rejected',
+            rejection_reason: reason,
+            reviewed_at: new Date().toISOString()
+          };
+          if (validAdminId) {
+            proofUpdates.reviewed_by = validAdminId;
+          }
+
           await supabase
             .from('payment_proofs')
-            .update({
-              status: 'rejected',
-              rejection_reason: reason,
-              reviewed_by: actorId,
-              reviewed_at: new Date().toISOString()
-            })
+            .update(proofUpdates)
             .eq('id', proofId);
+
+          const proof = devStore.getData().paymentProofs.find(p => p.id === proofId);
+          if (proof?.userId) {
+            await supabase
+              .from('profiles')
+              .update({
+                payment_proof_status: 'rejected',
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', proof.userId);
+          }
         } catch (err) {
           console.warn('Supabase reject payment sync error:', err);
         }

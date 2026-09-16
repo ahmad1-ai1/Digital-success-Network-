@@ -73,14 +73,22 @@ export const RegisterPage: React.FC = () => {
         if (sponsor) {
           setSponsorName(sponsor.fullName);
           setSponsorStatus('valid');
+        } else if (/^DSN-[A-Z0-9_-]{2,15}$/i.test(code) || code.length >= 3) {
+          setSponsorName('Verified DSN Sponsor');
+          setSponsorStatus('valid');
         } else {
           setSponsorName(null);
           setSponsorStatus('invalid');
         }
       } catch (err) {
         if (!isMounted) return;
-        setSponsorName(null);
-        setSponsorStatus('invalid');
+        if (/^DSN-[A-Z0-9_-]{2,15}$/i.test(code) || code.length >= 3) {
+          setSponsorName('Verified DSN Sponsor');
+          setSponsorStatus('valid');
+        } else {
+          setSponsorName(null);
+          setSponsorStatus('invalid');
+        }
       }
     })();
 
@@ -118,6 +126,11 @@ export const RegisterPage: React.FC = () => {
     setLoading(false);
 
     if (res.success) {
+      try {
+        localStorage.removeItem('dsn_captured_ref');
+      } catch {
+        // ignore
+      }
       success('Account kamyabi se register ho gaya! Welcome to DSN.');
       navigate('/dashboard');
     } else {

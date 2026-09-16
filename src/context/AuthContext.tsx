@@ -3,6 +3,7 @@ import { User, Profile } from '../types';
 import { authService, memberService, RegisterParams } from '../services';
 import { devStore } from '../store/devStore';
 import { supabase } from '../lib/supabase';
+import { userFromProfile } from '../lib/supabaseAdapters';
 
 interface AuthContextType {
   user: User | null;
@@ -12,7 +13,7 @@ interface AuthContextType {
   login: (email: string, password?: string) => Promise<{ success: boolean; user?: User; error?: string }>;
   register: (params: RegisterParams) => Promise<{ success: boolean; user?: User; error?: string }>;
   logout: () => Promise<void>;
-  refreshUser: () => void;
+  refreshUser: () => Promise<void> | void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -24,12 +25,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return cur ? memberService.getProfile(cur.id) : null;
   });
 
-  const refreshUser = useCallback(() => {
+  const refreshUser = useCallback(async () => {
     const cur = authService.getCurrentUser();
-    setUser(cur);
-    if (cur) {
-      setProfile(memberService.getProfile(cur.id));
+    let currentUserId = cur?.id;
+
+    if (!currentUserId) {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData?.session?.user?.id) {
+          currentUserId = sessionData.session.user.id;
+        }
+      } catch (err) {
+        console.warn('Could not read session in refreshUser:', err);
+      }
+    }
+
+    if (currentUserId) {
+      try {
+        const liveProfile = await authService.syncProfileForUser(currentUserId);
+        if (liveProfile) {
+          setProfile(liveProfile);
+          const liveUser = userFromProfile(liveProfile);
+          setUser(liveUser);
+          return;
+        }
+      } catch (err) {
+        console.warn('Could not refresh profile from Supabase:', err);
+      }
+
+      if (cur) {
+        setUser(cur);
+        setProfile(memberService.getProfile(cur.id));
+      }
     } else {
+      setUser(null);
       setProfile(null);
     }
   }, []);
@@ -51,6 +80,66 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       subscription.unsubscribe();
     };
   }, [refreshUser]);
+
+  // Realtime subscription, focus/visibility refetch, and polling for member status
+  useEffect(() => {
+    if (!user?.id) return;
+    const currentUserId = user.id;
+
+    // Supabase Realtime channel for instant push on admin approve/reject
+    const channel = supabase
+      .channel(`rt-user-status-${currentUserId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'profiles',
+          filter: `id=eq.${currentUserId}`
+        },
+        async () => {
+          await authService.syncProfileForUser(currentUserId);
+          refreshUser();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'payment_proofs',
+          filter: `user_id=eq.${currentUserId}`
+        },
+        async () => {
+          await authService.syncProfileForUser(currentUserId);
+          refreshUser();
+        }
+      )
+      .subscribe();
+
+    const onFocus = () => {
+      refreshUser();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshUser();
+      }
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    // Reliable fallback polling interval (6s)
+    const pollTimer = setInterval(() => {
+      refreshUser();
+    }, 6000);
+
+    return () => {
+      supabase.removeChannel(channel);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      clearInterval(pollTimer);
+    };
+  }, [user?.id, refreshUser]);
 
   const login = async (email: string, password?: string) => {
     const res = await authService.login(email, password);

@@ -49,7 +49,12 @@ export function profileFromDb(row: any): Profile {
     directTeamCount: Number(row.direct_team_count) || 0,
     totalTeamCount: Number(row.total_team_count) || 0,
     kycStatus: row.kyc_status || 'not_submitted',
-    paymentProofStatus: row.payment_proof_status || 'pending',
+    paymentProofStatus:
+      row.account_status === 'active' || row.payment_proof_status === 'approved' || row.payment_proof_status === 'verified'
+        ? 'approved'
+        : row.payment_proof_status === 'rejected'
+        ? 'rejected'
+        : 'pending',
     notificationPreferences: row.notification_preferences || {
       email: true,
       sms: false,
@@ -138,6 +143,13 @@ export function withdrawalFromDb(row: any): Withdrawal {
 }
 
 export function paymentProofFromDb(row: any): PaymentProof {
+  const normalizedStatus =
+    row.status === 'verified' || row.status === 'approved'
+      ? 'approved'
+      : row.status === 'rejected'
+      ? 'rejected'
+      : 'pending';
+
   return {
     id: row.id,
     userId: row.user_id,
@@ -150,7 +162,7 @@ export function paymentProofFromDb(row: any): PaymentProof {
     senderName: row.sender_name || undefined,
     senderAccount: row.sender_account || undefined,
     notes: row.notes || undefined,
-    status: row.status,
+    status: normalizedStatus as any,
     reviewedBy: row.reviewed_by || undefined,
     reviewedAt: row.reviewed_at || undefined,
     rejectionReason: row.rejection_reason || undefined,
