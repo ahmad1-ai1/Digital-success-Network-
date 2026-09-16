@@ -1,0 +1,6 @@
+{
+  "name": "Digital Success Network",
+  "description": "Digital Success Network (DSN) - Team Se Taraqqi Tak. A clean, backend-ready digital network platform with multi-level commissions, points, ranks, spin wheel, and member/admin portals.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

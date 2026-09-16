@@ -1,0 +1,2 @@
+-- Redirect to /supabase_schema.sql
+-- Run /supabase_schema.sql in the Supabase SQL Editor
