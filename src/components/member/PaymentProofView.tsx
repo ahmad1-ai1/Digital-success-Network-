@@ -1,4 +1,3 @@
-```tsx
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -8,15 +7,13 @@ import {
   Receipt,
   CheckCircle2,
   Clock,
-  XCircle,
   Upload,
   AlertTriangle,
   Building,
-  CreditCard,
   Send,
   MessageCircle,
   Copy,
-  Smartphone
+  Smartphone,
 } from 'lucide-react';
 import { PayoutMethod } from '../../types';
 
@@ -41,15 +38,15 @@ export const PaymentProofView: React.FC = () => {
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
 
-    if (file) {
-      const reader = new FileReader();
+    if (!file) return;
 
-      reader.onloadend = () => {
-        setReceiptImage(reader.result as string);
-      };
+    const reader = new FileReader();
 
-      reader.readAsDataURL(file);
-    }
+    reader.onloadend = () => {
+      setReceiptImage(reader.result as string);
+    };
+
+    reader.readAsDataURL(file);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -63,11 +60,9 @@ export const PaymentProofView: React.FC = () => {
     setLoading(true);
 
     try {
-      // Get the real Supabase Auth user.
-      // This ID must match auth.uid() for the payment_proofs RLS policy.
       const {
         data: { user: authUser },
-        error: authError
+        error: authError,
       } = await supabase.auth.getUser();
 
       if (authError || !authUser) {
@@ -85,7 +80,7 @@ export const PaymentProofView: React.FC = () => {
         receiptUrl:
           receiptImage ||
           'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=400',
-        notes: notes.trim() || undefined
+        notes: notes.trim() || undefined,
       });
 
       if (res.success) {
@@ -97,7 +92,7 @@ export const PaymentProofView: React.FC = () => {
         setReceiptImage(null);
         setNotes('');
 
-        refreshUser();
+        await refreshUser();
       } else {
         error(res.error || 'Failed to submit payment proof.');
       }
@@ -116,17 +111,16 @@ export const PaymentProofView: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Title */}
       <div>
         <h1 className="text-2xl font-extrabold text-slate-900 font-display">
           Activation Payment Proof
         </h1>
+
         <p className="text-xs sm:text-sm text-slate-500 mt-1">
           Submit your official receipt/transaction details to activate your membership.
         </p>
       </div>
 
-      {/* Account Status Card */}
       <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-xs flex items-center justify-between gap-4">
         <div>
           <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
@@ -174,7 +168,6 @@ export const PaymentProofView: React.FC = () => {
         </div>
       </div>
 
-      {/* Official Receiving Accounts */}
       <div className="p-6 sm:p-8 bg-slate-900 text-white rounded-3xl space-y-6 shadow-md border border-slate-800">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
@@ -187,7 +180,8 @@ export const PaymentProofView: React.FC = () => {
             </h2>
 
             <p className="text-xs text-slate-400 mt-1">
-              Select any of the two official channels below to transfer your 1,300 PKR activation payment:
+              Select any of the two official channels below to transfer your
+              1,300 PKR activation payment.
             </p>
           </div>
 
@@ -196,10 +190,8 @@ export const PaymentProofView: React.FC = () => {
           </span>
         </div>
 
-        {/* TWO Official Payment Methods */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Method 1: Bank Transfer */}
-          <div className="p-5 bg-slate-800/90 rounded-2xl border border-slate-700 space-y-3 relative group">
+          <div className="p-5 bg-slate-800/90 rounded-2xl border border-slate-700 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <div className="w-10 h-10 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center border border-blue-500/30">
@@ -249,6 +241,7 @@ export const PaymentProofView: React.FC = () => {
 
               <div className="flex justify-between items-center px-1">
                 <span className="text-slate-400">Account Name:</span>
+
                 <span className="font-bold text-white text-sm">
                   Khizer Abbas
                 </span>
@@ -256,8 +249,7 @@ export const PaymentProofView: React.FC = () => {
             </div>
           </div>
 
-          {/* Method 2: NayaPay */}
-          <div className="p-5 bg-slate-800/90 rounded-2xl border border-slate-700 space-y-3 relative group">
+          <div className="p-5 bg-slate-800/90 rounded-2xl border border-slate-700 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/30">
@@ -307,6 +299,7 @@ export const PaymentProofView: React.FC = () => {
 
               <div className="flex justify-between items-center px-1">
                 <span className="text-slate-400">Account Name:</span>
+
                 <span className="font-bold text-white text-sm">
                   Khizer Abbas
                 </span>
@@ -315,7 +308,6 @@ export const PaymentProofView: React.FC = () => {
           </div>
         </div>
 
-        {/* Verification Notice */}
         <div className="p-4 sm:p-5 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 space-y-4">
           <div className="flex items-start gap-3 text-xs text-slate-300">
             <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
@@ -357,7 +349,6 @@ export const PaymentProofView: React.FC = () => {
         </div>
       </div>
 
-      {/* Submission Form */}
       {profile.accountStatus !== 'active' && (
         <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-xs">
           <h2 className="text-base font-bold text-slate-900 font-display mb-4">
@@ -376,7 +367,7 @@ export const PaymentProofView: React.FC = () => {
                   required
                   placeholder="e.g. 02938491823"
                   value={transactionId}
-                  onChange={e => setTransactionId(e.target.value)}
+                  onChange={(e) => setTransactionId(e.target.value)}
                   className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all uppercase"
                 />
               </div>
@@ -390,7 +381,7 @@ export const PaymentProofView: React.FC = () => {
                   type="number"
                   required
                   value={amount}
-                  onChange={e => setAmount(Number(e.target.value))}
+                  onChange={(e) => setAmount(Number(e.target.value))}
                   className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
                 />
               </div>
@@ -406,12 +397,14 @@ export const PaymentProofView: React.FC = () => {
                   { key: 'bank_transfer', label: 'JS Bank' },
                   { key: 'nayapay', label: 'NayaPay' },
                   { key: 'jazzcash', label: 'JazzCash' },
-                  { key: 'easypaisa', label: 'EasyPaisa' }
-                ].map(item => (
+                  { key: 'easypaisa', label: 'EasyPaisa' },
+                ].map((item) => (
                   <button
                     key={item.key}
                     type="button"
-                    onClick={() => setMethod(item.key as PayoutMethod)}
+                    onClick={() =>
+                      setMethod(item.key as PayoutMethod)
+                    }
                     className={`py-2 px-3 rounded-xl text-xs font-bold capitalize transition-all border ${
                       method === item.key
                         ? 'bg-blue-50 border-blue-500 text-blue-800 shadow-xs'
@@ -434,7 +427,7 @@ export const PaymentProofView: React.FC = () => {
                   type="text"
                   required
                   value={senderName}
-                  onChange={e => setSenderName(e.target.value)}
+                  onChange={(e) => setSenderName(e.target.value)}
                   className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
                 />
               </div>
@@ -448,7 +441,7 @@ export const PaymentProofView: React.FC = () => {
                   type="text"
                   required
                   value={senderAccount}
-                  onChange={e => setSenderAccount(e.target.value)}
+                  onChange={(e) => setSenderAccount(e.target.value)}
                   className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
                 />
               </div>
@@ -484,7 +477,7 @@ export const PaymentProofView: React.FC = () => {
                 type="text"
                 placeholder="Any additional remarks..."
                 value={notes}
-                onChange={e => setNotes(e.target.value)}
+                onChange={(e) => setNotes(e.target.value)}
                 className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
               />
             </div>
@@ -495,6 +488,7 @@ export const PaymentProofView: React.FC = () => {
               className="w-full py-3 px-4 rounded-xl font-bold text-sm text-white bg-blue-600 hover:bg-blue-700 shadow-md transition-all flex items-center justify-center gap-2 active:scale-98 disabled:opacity-50"
             >
               <Send className="w-4 h-4" />
+
               <span>
                 {loading ? 'Submitting...' : 'Submit Payment Proof'}
               </span>
@@ -503,7 +497,6 @@ export const PaymentProofView: React.FC = () => {
         </div>
       )}
 
-      {/* History */}
       <div className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden">
         <div className="p-4 border-b border-slate-200">
           <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
@@ -525,7 +518,7 @@ export const PaymentProofView: React.FC = () => {
             </thead>
 
             <tbody className="divide-y divide-slate-100">
-              {proofs.map(p => (
+              {proofs.map((p) => (
                 <tr
                   key={p.id}
                   className="hover:bg-slate-50/80 transition-colors"
@@ -585,4 +578,3 @@ export const PaymentProofView: React.FC = () => {
     </div>
   );
 };
-```
