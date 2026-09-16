@@ -1,9 +1,12 @@
-import React, { useState } from 'react';
+```tsx
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
-import { adminService, paymentService } from '../../services';
+import { adminService } from '../../services';
 import { devStore } from '../../store/devStore';
-import { CheckCircle2, XCircle, Eye, Receipt, Clock, AlertCircle, Filter, Check } from 'lucide-react';
+import { supabase } from '../../lib/supabase';
+import { paymentProofFromDb } from '../../lib/supabaseAdapters';
+import { Eye, Check } from 'lucide-react';
 import { PaymentProof } from '../../types';
 
 export const AdminPaymentsView: React.FC = () => {
@@ -16,40 +19,82 @@ export const AdminPaymentsView: React.FC = () => {
   const [rejectionReason, setRejectionReason] = useState('');
   const [loading, setLoading] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [allProofs, setAllProofs] = useState<PaymentProof[]>([]);
 
   const db = devStore.getData();
-  const allProofs = paymentService.getAllProofs();
+
+  useEffect(() => {
+    const loadPaymentProofs = async () => {
+      setLoading(true);
+
+      try {
+        const { data, error: fetchError } = await supabase
+          .from('payment_proofs')
+          .select('*')
+          .order('date_submitted', { ascending: false });
+
+        if (fetchError) {
+          console.error('Failed to load payment proofs:', fetchError);
+          error('Failed to load payment proofs.');
+          setAllProofs([]);
+          return;
+        }
+
+        const proofs = (data || []).map(paymentProofFromDb);
+        setAllProofs(proofs);
+      } catch (err) {
+        console.error('Failed to load payment proofs:', err);
+        error('Failed to load payment proofs.');
+        setAllProofs([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadPaymentProofs();
+  }, [refreshTrigger]);
 
   const filteredProofs = allProofs.filter(p => {
     if (filter === 'all') return true;
     return p.status === filter;
   });
 
-  const handleApprove = (proof: PaymentProof) => {
+  const handleApprove = async (proof: PaymentProof) => {
     if (!user) return;
+
     setLoading(true);
-    const res = adminService.approvePayment(proof.id, user.id);
-    setLoading(false);
+
+    const res = await adminService.approvePayment(proof.id, user.id);
 
     if (res.success) {
-      success(`Payment ${proof.transactionId} approved! Member activated and commissions/points/spin distributed.`);
-      setRefreshTrigger(prev => prev + 1);
+      success(
+        `Payment ${proof.transactionId} approved! Member activated and commissions/points/spin distributed.`
+      );
+
       setSelectedProof(null);
+      setRefreshTrigger(prev => prev + 1);
     } else {
       error(res.error || 'Failed to approve payment.');
     }
+
+    setLoading(false);
   };
 
-  const handleReject = () => {
+  const handleReject = async () => {
     if (!user || !selectedProof) return;
+
     if (!rejectionReason.trim()) {
       error('Please provide a reason for rejecting the payment proof.');
       return;
     }
 
     setLoading(true);
-    const res = adminService.rejectPayment(selectedProof.id, user.id, rejectionReason.trim());
-    setLoading(false);
+
+    const res = adminService.rejectPayment(
+      selectedProof.id,
+      user.id,
+      rejectionReason.trim()
+    );
 
     if (res.success) {
       success(`Payment ${selectedProof.transactionId} rejected.`);
@@ -60,6 +105,8 @@ export const AdminPaymentsView: React.FC = () => {
     } else {
       error(res.error || 'Failed to reject payment.');
     }
+
+    setLoading(false);
   };
 
   return (
@@ -108,6 +155,7 @@ export const AdminPaymentsView: React.FC = () => {
                 <th className="py-3 px-4 text-right">Actions</th>
               </tr>
             </thead>
+
             <tbody className="divide-y divide-slate-800/80">
               {filteredProofs.map(p => {
                 const member = db.users.find(u => u.id === p.userId);
@@ -117,21 +165,31 @@ export const AdminPaymentsView: React.FC = () => {
                     <td className="py-3 px-4 font-mono font-bold text-white">
                       {p.transactionId}
                     </td>
+
                     <td className="py-3 px-4">
-                      <p className="font-bold text-slate-200">{member?.fullName || p.senderName}</p>
-                      <p className="text-[11px] font-mono text-slate-500">{member?.email}</p>
+                      <p className="font-bold text-slate-200">
+                        {member?.fullName || p.senderName}
+                      </p>
+
+                      <p className="text-[11px] font-mono text-slate-500">
+                        {member?.email}
+                      </p>
                     </td>
+
                     <td className="py-3 px-4 font-bold text-emerald-400">
                       {p.amount.toLocaleString()} PKR
                     </td>
+
                     <td className="py-3 px-4">
                       <span className="capitalize font-semibold text-slate-300 block">
                         {p.paymentMethod.replace('_', ' ')}
                       </span>
+
                       <span className="text-[11px] font-mono text-slate-500">
                         {p.senderAccount} ({p.senderName})
                       </span>
                     </td>
+
                     <td className="py-3 px-4">
                       <span
                         className={`text-[11px] font-bold px-2 py-0.5 rounded-full capitalize ${
@@ -145,9 +203,11 @@ export const AdminPaymentsView: React.FC = () => {
                         {p.status}
                       </span>
                     </td>
+
                     <td className="py-3 px-4 text-slate-500 text-xs">
                       {new Date(p.createdAt).toLocaleDateString()}
                     </td>
+
                     <td className="py-3 px-4 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <button
@@ -163,18 +223,19 @@ export const AdminPaymentsView: React.FC = () => {
                             <button
                               disabled={loading}
                               onClick={() => handleApprove(p)}
-                              className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1 shadow-xs"
+                              className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1 shadow-xs disabled:opacity-50"
                             >
                               <Check className="w-3 h-3" />
                               <span>Approve</span>
                             </button>
+
                             <button
                               disabled={loading}
                               onClick={() => {
                                 setSelectedProof(p);
                                 setRejectModalOpen(true);
                               }}
-                              className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs"
+                              className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs disabled:opacity-50"
                             >
                               Reject
                             </button>
@@ -186,7 +247,15 @@ export const AdminPaymentsView: React.FC = () => {
                 );
               })}
 
-              {filteredProofs.length === 0 && (
+              {loading && filteredProofs.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="py-12 text-center text-slate-500 text-xs">
+                    Loading payment submissions...
+                  </td>
+                </tr>
+              )}
+
+              {!loading && filteredProofs.length === 0 && (
                 <tr>
                   <td colSpan={7} className="py-12 text-center text-slate-500 text-xs">
                     No payment submissions found in this category.
@@ -206,7 +275,11 @@ export const AdminPaymentsView: React.FC = () => {
               <h2 className="text-base font-bold text-white font-display">
                 Payment Proof Details
               </h2>
-              <button onClick={() => setSelectedProof(null)} className="text-slate-400 hover:text-white">
+
+              <button
+                onClick={() => setSelectedProof(null)}
+                className="text-slate-400 hover:text-white"
+              >
                 ✕
               </button>
             </div>
@@ -214,31 +287,47 @@ export const AdminPaymentsView: React.FC = () => {
             <div className="space-y-3 text-xs">
               <div className="flex justify-between p-3 rounded-xl bg-slate-900">
                 <span className="text-slate-400">Transaction ID:</span>
-                <span className="font-mono font-bold text-white">{selectedProof.transactionId}</span>
+                <span className="font-mono font-bold text-white">
+                  {selectedProof.transactionId}
+                </span>
               </div>
+
               <div className="flex justify-between p-3 rounded-xl bg-slate-900">
                 <span className="text-slate-400">Amount:</span>
-                <span className="font-bold text-emerald-400">{selectedProof.amount} PKR</span>
+                <span className="font-bold text-emerald-400">
+                  {selectedProof.amount} PKR
+                </span>
               </div>
+
               <div className="flex justify-between p-3 rounded-xl bg-slate-900">
                 <span className="text-slate-400">Sender Account:</span>
-                <span className="font-mono text-slate-200">{selectedProof.senderAccount} ({selectedProof.senderName})</span>
+                <span className="font-mono text-slate-200">
+                  {selectedProof.senderAccount} ({selectedProof.senderName})
+                </span>
               </div>
+
               <div className="flex justify-between p-3 rounded-xl bg-slate-900">
                 <span className="text-slate-400">Method:</span>
-                <span className="capitalize text-slate-200">{selectedProof.paymentMethod.replace('_', ' ')}</span>
+                <span className="capitalize text-slate-200">
+                  {selectedProof.paymentMethod.replace('_', ' ')}
+                </span>
               </div>
 
               {selectedProof.notes && (
                 <div className="p-3 rounded-xl bg-slate-900 text-slate-300">
-                  <span className="text-slate-400 block mb-1">User Note:</span>
+                  <span className="text-slate-400 block mb-1">
+                    User Note:
+                  </span>
                   {selectedProof.notes}
                 </div>
               )}
 
               {selectedProof.receiptUrl && (
                 <div className="mt-2 space-y-1">
-                  <span className="text-slate-400 font-bold block">Attached Receipt:</span>
+                  <span className="text-slate-400 font-bold block">
+                    Attached Receipt:
+                  </span>
+
                   <div className="rounded-2xl overflow-hidden border border-slate-800 max-h-56 bg-black flex items-center justify-center">
                     <img
                       src={selectedProof.receiptUrl}
@@ -257,10 +346,12 @@ export const AdminPaymentsView: React.FC = () => {
               >
                 Close
               </button>
+
               {selectedProof.status === 'pending' && (
                 <button
                   onClick={() => handleApprove(selectedProof)}
-                  className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-bold"
+                  disabled={loading}
+                  className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-bold disabled:opacity-50"
                 >
                   Approve & Activate
                 </button>
@@ -277,8 +368,10 @@ export const AdminPaymentsView: React.FC = () => {
             <h2 className="text-base font-bold text-white font-display">
               Reject Payment Submission
             </h2>
+
             <p className="text-xs text-slate-400">
-              Please enter an explanatory reason that will be visible to member <strong>{selectedProof.senderName}</strong>.
+              Please enter an explanatory reason that will be visible to member{' '}
+              <strong>{selectedProof.senderName}</strong>.
             </p>
 
             <textarea
@@ -297,10 +390,11 @@ export const AdminPaymentsView: React.FC = () => {
               >
                 Cancel
               </button>
+
               <button
                 onClick={handleReject}
                 disabled={loading}
-                className="px-4 py-2 bg-rose-600 text-white rounded-xl text-xs font-bold"
+                className="px-4 py-2 bg-rose-600 text-white rounded-xl text-xs font-bold disabled:opacity-50"
               >
                 Confirm Rejection
               </button>
@@ -311,3 +405,8 @@ export const AdminPaymentsView: React.FC = () => {
     </div>
   );
 };
+```
+
+**Bas ye file replace karo.** Is change ka main point ye hai ke page ab `paymentService.getAllProofs()` ke local `devStore` par depend nahi karega; **Supabase `payment_proofs` se directly data load karega**.
+
+Uske baad build/run karke check karenge.
