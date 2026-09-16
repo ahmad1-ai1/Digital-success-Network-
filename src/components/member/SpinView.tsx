@@ -191,7 +191,7 @@ export const SpinView: React.FC = () => {
                 <span>1 Direct Eligible Joining = 1 Spin Credit</span>
               </p>
               <p>
-                Jab bhi aapka direct refer kiya gaya member 1,000 PKR activation fee ke sath active hota hai, to foran aapko 1 lucky spin credit mil jata hai.
+                Jab bhi aapka direct refer kiya gaya member 1,300 PKR activation fee ke sath active hota hai, to foran aapko 1 lucky spin credit mil jata hai.
               </p>
             </div>
 
