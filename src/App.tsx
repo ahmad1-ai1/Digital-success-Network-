@@ -37,43 +37,15 @@ import { KYCView } from './components/member/KYCView';
 import { PaymentProofView } from './components/member/PaymentProofView';
 
 // Admin Views
-import { AdminOverview } from './components/admin/AdminOverview';
-import { AdminPaymentsView } from './components/admin/AdminPaymentsView';
-import { AdminWithdrawalsView } from './components/admin/AdminWithdrawalsView';
-import { AdminKYCView } from './components/admin/AdminKYCView';
-import { AdminUsersView } from './components/admin/AdminUsersView';
-import { AdminProductsView } from './components/admin/AdminProductsView';
-import { AdminSettingsView } from './components/admin/AdminSettingsView';
+import { AdminPortalView } from './components/admin/AdminPortalView';
 
 const AppRouter: React.FC = () => {
   const { currentPath } = useNavigation();
   const { user, isAdmin } = useAuth();
 
-  // 1. Admin Routes (Strict role-based protection)
+  // 1. Admin Routes (Admin Portal with Supabase Auth structure)
   if (currentPath.startsWith('/admin')) {
-    if (!user || !isAdmin) {
-      return (
-        <div className="min-h-screen flex flex-col bg-slate-900">
-          <AdminLayout>
-            <div />
-          </AdminLayout>
-        </div>
-      );
-    }
-
-    return (
-      <div className="min-h-screen flex flex-col bg-slate-900">
-        <AdminLayout>
-          {currentPath === '/admin' && <AdminOverview />}
-          {currentPath === '/admin/payments' && <AdminPaymentsView />}
-          {currentPath === '/admin/withdrawals' && <AdminWithdrawalsView />}
-          {currentPath === '/admin/kyc' && <AdminKYCView />}
-          {currentPath === '/admin/users' && <AdminUsersView />}
-          {currentPath === '/admin/products' && <AdminProductsView />}
-          {currentPath === '/admin/settings' && <AdminSettingsView />}
-        </AdminLayout>
-      </div>
-    );
+    return <AdminPortalView />;
   }
 
   // 2. Member Dashboard Routes

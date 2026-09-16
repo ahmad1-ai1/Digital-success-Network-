@@ -137,6 +137,18 @@ export const Footer: React.FC = () => {
                 <span>Official WhatsApp Support Available</span>
               </div>
             </div>
+
+            {/* Subtle Admin Access Link */}
+            <div className="pt-3 border-t border-slate-800/80">
+              <button
+                onClick={() => navigate('/admin')}
+                className="text-xs text-slate-500 hover:text-slate-300 transition-colors inline-flex items-center gap-1.5 opacity-70 hover:opacity-100 cursor-pointer"
+                title="Administration Access"
+              >
+                <Shield className="w-3.5 h-3.5 text-slate-500" />
+                <span>Admin</span>
+              </button>
+            </div>
           </div>
         </div>
 
