@@ -383,6 +383,12 @@ class AdminPortalService {
     return [...this.notifications];
   }
 
+  getUnreadNotificationsCount(): number {
+    return this.notifications.filter(
+      notification => !notification.read
+    ).length;
+  }
+
   getDashboardSummary(): DashboardSummary {
     const pendingDeposits = this.deposits.filter(
       item => item.status === 'pending'
@@ -454,7 +460,9 @@ class AdminPortalService {
 
         return {
           success: false,
-          error: error.message || 'Failed to approve payment.',
+          error:
+            error.message ||
+            'Failed to approve payment.',
         };
       }
 
