@@ -1,4 +1,3 @@
-```typescript
 import { devStore } from '../store/devStore';
 import { adminAuthService } from './adminAuthService';
 import { supabase } from '../lib/supabase';
@@ -90,7 +89,8 @@ class AdminPortalService {
   private notifications: AdminNotification[] = [];
 
   private isLoadedFromSupabase = false;
-  private realtimeChannel: ReturnType<typeof supabase.channel> | null = null;
+  private realtimeChannel: ReturnType<typeof supabase.channel> | null =
+    null;
   private loadPromise: Promise<void> | null = null;
 
   constructor() {
@@ -103,23 +103,29 @@ class AdminPortalService {
     if (typeof window === 'undefined') return;
 
     try {
-      // Remove old/demo storage versions.
       localStorage.removeItem('dsn_admin_deposits_v1');
       localStorage.removeItem('dsn_admin_withdrawals_v1');
       localStorage.removeItem('dsn_admin_activities_v1');
       localStorage.removeItem('dsn_admin_notifs_v1');
 
-      const savedDep = localStorage.getItem(LOCAL_STORAGE_DEPOSITS_KEY);
-      const savedWd = localStorage.getItem(LOCAL_STORAGE_WITHDRAWALS_KEY);
-      const savedAct = localStorage.getItem(LOCAL_STORAGE_ACTIVITIES_KEY);
-      const savedNot = localStorage.getItem(LOCAL_STORAGE_NOTIFS_KEY);
+      const savedDep = localStorage.getItem(
+        LOCAL_STORAGE_DEPOSITS_KEY
+      );
+      const savedWd = localStorage.getItem(
+        LOCAL_STORAGE_WITHDRAWALS_KEY
+      );
+      const savedAct = localStorage.getItem(
+        LOCAL_STORAGE_ACTIVITIES_KEY
+      );
+      const savedNot = localStorage.getItem(
+        LOCAL_STORAGE_NOTIFS_KEY
+      );
 
       this.deposits = savedDep ? JSON.parse(savedDep) : [];
       this.withdrawals = savedWd ? JSON.parse(savedWd) : [];
       this.activities = savedAct ? JSON.parse(savedAct) : [];
       this.notifications = savedNot ? JSON.parse(savedNot) : [];
 
-      // Remove known fake/demo records.
       this.deposits = this.deposits.filter(
         d => !d.id.startsWith('DEP-982')
       );
@@ -153,7 +159,10 @@ class AdminPortalService {
           ].includes(n.id)
       );
     } catch (error) {
-      console.warn('Could not load admin local state:', error);
+      console.warn(
+        'Could not load admin local state:',
+        error
+      );
 
       this.deposits = [];
       this.withdrawals = [];
@@ -164,9 +173,6 @@ class AdminPortalService {
 
   /**
    * Public refresh method.
-   *
-   * Call this whenever the admin dashboard opens or when you want
-   * to manually force a fresh Supabase read.
    */
   async refresh(): Promise<void> {
     await this.loadFromSupabase();
@@ -176,7 +182,6 @@ class AdminPortalService {
    * Load real payment proofs and withdrawals from Supabase.
    *
    * Supabase is the source of truth.
-   * LocalStorage is NOT allowed to overwrite fresh database data.
    */
   async loadFromSupabase(): Promise<void> {
     if (this.loadPromise) {
@@ -194,14 +199,9 @@ class AdminPortalService {
 
   private async performSupabaseLoad(): Promise<void> {
     try {
-      /*
-       * ============================================================
-       * 1. PAYMENT PROOFS
-       * ============================================================
-       *
-       * We intentionally do NOT depend on date_submitted existing.
-       * First try created_at, then fallback to an unordered query.
-       */
+      // ============================================================
+      // 1. PAYMENT PROOFS
+      // ============================================================
 
       let proofs: any[] | null = null;
       let proofError: any = null;
@@ -214,11 +214,6 @@ class AdminPortalService {
       proofs = firstProofQuery.data;
       proofError = firstProofQuery.error;
 
-      /*
-       * Fallback:
-       * If created_at is missing or another query issue occurs,
-       * fetch the table without an ORDER BY.
-       */
       if (proofError) {
         console.warn(
           'Primary payment_proofs query failed. Trying fallback query:',
@@ -241,9 +236,12 @@ class AdminPortalService {
       } else if (Array.isArray(proofs)) {
         const mappedDeposits: DepositItem[] = proofs
           .map((p: any) => {
-            const rawStatus = String(p.status || 'pending').toLowerCase();
+            const rawStatus = String(
+              p.status || 'pending'
+            ).toLowerCase();
 
-            let status: DepositItem['status'] = 'pending';
+            let status: DepositItem['status'] =
+              'pending';
 
             if (
               rawStatus === 'approved' ||
@@ -314,35 +312,41 @@ class AdminPortalService {
                 undefined
             };
           })
-          .filter((p: DepositItem) => Boolean(p.id));
+          .filter(
+            (p: DepositItem) => Boolean(p.id)
+          );
 
-        /*
-         * Always sort on the client.
-         * This works even when created_at/date_submitted differs
-         * between database versions.
-         */
         mappedDeposits.sort((a, b) => {
-          const aTime = new Date(a.createdAt).getTime();
-          const bTime = new Date(b.createdAt).getTime();
+          const aTime = new Date(
+            a.createdAt
+          ).getTime();
+
+          const bTime = new Date(
+            b.createdAt
+          ).getTime();
 
           return (
-            (Number.isFinite(bTime) ? bTime : 0) -
-            (Number.isFinite(aTime) ? aTime : 0)
+            (Number.isFinite(bTime)
+              ? bTime
+              : 0) -
+            (Number.isFinite(aTime)
+              ? aTime
+              : 0)
           );
         });
 
         this.deposits = mappedDeposits;
 
         console.log(
-  '[AdminPortal] Loaded ' +
-    mappedDeposits.length +
-    ' payment proof(s) from Supabase.'
-);
-      /*
-       * ============================================================
-       * 2. WITHDRAWALS
-       * ============================================================
-       */
+          '[AdminPortal] Loaded ' +
+            mappedDeposits.length +
+            ' payment proof(s) from Supabase.'
+        );
+      }
+
+      // ============================================================
+      // 2. WITHDRAWALS
+      // ============================================================
 
       let withdrawals: any[] | null = null;
       let withdrawalError: any = null;
@@ -350,7 +354,9 @@ class AdminPortalService {
       const withdrawalQuery = await supabase
         .from('withdrawals')
         .select('*')
-        .order('created_at', { ascending: false });
+        .order('created_at', {
+          ascending: false
+        });
 
       withdrawals = withdrawalQuery.data;
       withdrawalError = withdrawalQuery.error;
@@ -363,22 +369,29 @@ class AdminPortalService {
       } else if (Array.isArray(withdrawals)) {
         this.withdrawals = withdrawals
           .map((w: any) => {
-            const rawStatus = String(w.status || 'pending').toLowerCase();
+            const rawStatus = String(
+              w.status || 'pending'
+            ).toLowerCase();
 
-            let status: WithdrawalItem['status'] = 'pending';
+            let status: WithdrawalItem['status'] =
+              'pending';
 
             if (
               rawStatus === 'approved' ||
               rawStatus === 'paid'
             ) {
               status = 'approved';
-            } else if (rawStatus === 'rejected') {
+            } else if (
+              rawStatus === 'rejected'
+            ) {
               status = 'rejected';
             }
 
             return {
               id: String(w.id),
-              userId: String(w.user_id || ''),
+              userId: String(
+                w.user_id || ''
+              ),
               userName:
                 w.user_full_name ||
                 w.full_name ||
@@ -428,24 +441,23 @@ class AdminPortalService {
                 undefined
             };
           })
-          .filter((w: WithdrawalItem) => Boolean(w.id));
+          .filter(
+            (w: WithdrawalItem) =>
+              Boolean(w.id)
+          );
       }
 
-      this.isLoadedFromSupabase = !proofError;
+      this.isLoadedFromSupabase =
+        !proofError;
 
-      /*
-       * IMPORTANT:
-       * Do not replace Supabase data with localStorage.
-       * LocalStorage is only a cache for activities/notifications.
-       */
       this.persist();
 
       console.log(
-  '[AdminPortal] Supabase sync complete. Deposits: ' +
-    this.deposits.length +
-    ', Withdrawals: ' +
-    this.withdrawals.length
-);
+        '[AdminPortal] Supabase sync complete. Deposits: ' +
+          this.deposits.length +
+          ', Withdrawals: ' +
+          this.withdrawals.length
+      );
     } catch (error) {
       console.error(
         '[AdminPortal] Supabase synchronization error:',
@@ -456,20 +468,23 @@ class AdminPortalService {
 
   /**
    * Realtime listener.
-   *
-   * When a member submits a new payment proof,
-   * this automatically reloads the admin data.
    */
   private setupRealtime(): void {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined') {
+      return;
+    }
 
     try {
       if (this.realtimeChannel) {
-        supabase.removeChannel(this.realtimeChannel);
+        supabase.removeChannel(
+          this.realtimeChannel
+        );
       }
 
       this.realtimeChannel = supabase
-        .channel('dsn-admin-payment-proofs')
+        .channel(
+          'dsn-admin-payment-proofs'
+        )
         .on(
           'postgres_changes',
           {
@@ -483,10 +498,6 @@ class AdminPortalService {
               payload.eventType
             );
 
-            /*
-             * Small delay allows Supabase transaction visibility
-             * to settle before the fresh SELECT.
-             */
             window.setTimeout(() => {
               this.loadFromSupabase();
             }, 300);
@@ -524,13 +535,16 @@ class AdminPortalService {
     }
   }
 
-  private async resolveAdminId(): Promise<string | null> {
+  private async resolveAdminId(): Promise<
+    string | null
+  > {
     const uuidRegex =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
     // 1. Admin auth service
     try {
-      const storedAdmin = adminAuthService.getCurrentAdmin();
+      const storedAdmin =
+        adminAuthService.getCurrentAdmin();
 
       if (
         storedAdmin?.id &&
@@ -550,9 +564,13 @@ class AdminPortalService {
       const { data: sessionData } =
         await supabase.auth.getSession();
 
-      const id = sessionData?.session?.user?.id;
+      const id =
+        sessionData?.session?.user?.id;
 
-      if (id && uuidRegex.test(id)) {
+      if (
+        id &&
+        uuidRegex.test(id)
+      ) {
         return id;
       }
     } catch (error) {
@@ -569,7 +587,10 @@ class AdminPortalService {
 
       const id = userData?.user?.id;
 
-      if (id && uuidRegex.test(id)) {
+      if (
+        id &&
+        uuidRegex.test(id)
+      ) {
         return id;
       }
     } catch (error) {
@@ -607,13 +628,11 @@ class AdminPortalService {
   }
 
   private persist(): void {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined') {
+      return;
+    }
 
     try {
-      /*
-       * Only cache the current real data.
-       * This is NOT the source of truth.
-       */
       localStorage.setItem(
         LOCAL_STORAGE_DEPOSITS_KEY,
         JSON.stringify(this.deposits)
@@ -621,17 +640,23 @@ class AdminPortalService {
 
       localStorage.setItem(
         LOCAL_STORAGE_WITHDRAWALS_KEY,
-        JSON.stringify(this.withdrawals)
+        JSON.stringify(
+          this.withdrawals
+        )
       );
 
       localStorage.setItem(
         LOCAL_STORAGE_ACTIVITIES_KEY,
-        JSON.stringify(this.activities)
+        JSON.stringify(
+          this.activities
+        )
       );
 
       localStorage.setItem(
         LOCAL_STORAGE_NOTIFS_KEY,
-        JSON.stringify(this.notifications)
+        JSON.stringify(
+          this.notifications
+        )
       );
     } catch (error) {
       console.warn(
@@ -646,24 +671,38 @@ class AdminPortalService {
   // ============================================================
 
   getDashboardSummary(): DashboardSummary {
-    const totalDepositsAmount = this.deposits
-      .filter(d => d.status === 'approved')
-      .reduce((sum, d) => sum + d.amount, 0);
+    const totalDepositsAmount =
+      this.deposits
+        .filter(
+          d => d.status === 'approved'
+        )
+        .reduce(
+          (sum, d) =>
+            sum + d.amount,
+          0
+        );
 
     const pendingDeposits =
-      this.deposits.filter(d => d.status === 'pending');
+      this.deposits.filter(
+        d => d.status === 'pending'
+      );
 
     const pendingDepositsAmount =
       pendingDeposits.reduce(
-        (sum, d) => sum + d.amount,
+        (sum, d) =>
+          sum + d.amount,
         0
       );
 
     const totalWithdrawalsAmount =
       this.withdrawals
-        .filter(w => w.status === 'approved')
+        .filter(
+          w =>
+            w.status === 'approved'
+        )
         .reduce(
-          (sum, w) => sum + w.grossAmount,
+          (sum, w) =>
+            sum + w.grossAmount,
           0
         );
 
@@ -674,23 +713,28 @@ class AdminPortalService {
 
     const pendingWithdrawalsAmount =
       pendingWithdrawals.reduce(
-        (sum, w) => sum + w.grossAmount,
+        (sum, w) =>
+          sum + w.grossAmount,
         0
       );
 
     return {
       totalDepositsAmount,
-      totalDepositsCount: this.deposits.filter(
-        d => d.status === 'approved'
-      ).length,
+      totalDepositsCount:
+        this.deposits.filter(
+          d =>
+            d.status === 'approved'
+        ).length,
 
       pendingDepositsAmount,
-      pendingDepositsCount: pendingDeposits.length,
+      pendingDepositsCount:
+        pendingDeposits.length,
 
       totalWithdrawalsAmount,
       totalWithdrawalsCount:
         this.withdrawals.filter(
-          w => w.status === 'approved'
+          w =>
+            w.status === 'approved'
         ).length,
 
       pendingWithdrawalsAmount,
@@ -710,7 +754,9 @@ class AdminPortalService {
       | 'approved'
       | 'rejected'
   ): DepositItem[] {
-    const list = [...this.deposits];
+    const list = [
+      ...this.deposits
+    ];
 
     if (
       !statusFilter ||
@@ -742,7 +788,10 @@ class AdminPortalService {
     const uuidRegex =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-    if (!id || !uuidRegex.test(id)) {
+    if (
+      !id ||
+      !uuidRegex.test(id)
+    ) {
       return {
         success: false,
         error:
@@ -761,14 +810,17 @@ class AdminPortalService {
       };
     }
 
-    const { data: rpcData, error: rpcErr } =
-      await supabase.rpc(
-        'admin_approve_payment',
-        {
-          p_proof_id: id,
-          p_actor_id: currentAdminId
-        }
-      );
+    const {
+      data: rpcData,
+      error: rpcErr
+    } = await supabase.rpc(
+      'admin_approve_payment',
+      {
+        p_proof_id: id,
+        p_actor_id:
+          currentAdminId
+      }
+    );
 
     if (rpcErr) {
       console.error(
@@ -804,58 +856,102 @@ class AdminPortalService {
     }
 
     const item =
-      this.deposits.find(d => d.id === id);
+      this.deposits.find(
+        d => d.id === id
+      );
 
     const nowIso =
       new Date().toISOString();
 
     if (item) {
       item.status = 'approved';
-      item.reviewedAt = nowIso;
+      item.reviewedAt =
+        nowIso;
     }
 
     this.activities.unshift({
-     src/services/adminPortalService.ts
-      type: 'deposit_approved',
-      title: 'Payment approved',
-      description: `Payment of ${(item?.amount || 0).toLocaleString()} PKR approved for ${item?.userName || 'Member'} (Trx: ${item?.transactionId || id})`,
-      amount: item?.amount || 0,
+      id:
+        'act-' +
+        Date.now(),
+      type:
+        'deposit_approved',
+      title:
+        'Payment approved',
+      description:
+        'Payment of ' +
+        (item?.amount || 0).toLocaleString() +
+        ' PKR approved for ' +
+        (item?.userName ||
+          'Member') +
+        ' (Trx: ' +
+        (item?.transactionId ||
+          id) +
+        ')',
+      amount:
+        item?.amount || 0,
       targetId: id,
       timestamp: nowIso,
       userFullName:
-        item?.userName || 'Member'
+        item?.userName ||
+        'Member'
     });
 
     this.notifications.unshift({
-      id: `notif-${Date.now()}`,
-      title: 'Payment approved',
-      message: `Deposit of ${item?.amount || 0} PKR for ${item?.userName || 'Member'} was verified and approved by ${actorName}.`,
+      id:
+        'notif-' +
+        Date.now(),
+      title:
+        'Payment approved',
+      message:
+        'Deposit of ' +
+        (item?.amount || 0) +
+        ' PKR for ' +
+        (item?.userName ||
+          'Member') +
+        ' was verified and approved by ' +
+        actorName +
+        '.',
       type: 'deposit',
       read: false,
       createdAt: nowIso,
-      actionUrl: '/admin/deposits'
+      actionUrl:
+        '/admin/deposits'
     });
 
     this.persist();
 
-    // Keep legacy/dev state synchronized if present.
     devStore.save(db => {
-      if (item?.userId) {
-        if (db.profiles[item.userId]) {
-          db.profiles[item.userId].accountStatus =
+      if (
+        item?.userId
+      ) {
+        if (
+          db.profiles[
+            item.userId
+          ]
+        ) {
+          db.profiles[
+            item.userId
+          ].accountStatus =
             'active';
 
-          db.profiles[item.userId].paymentProofStatus =
+          db.profiles[
+            item.userId
+          ].paymentProofStatus =
             'approved';
         }
 
-        const user = db.users.find(
-          usr => usr.id === item.userId
-        );
+        const user =
+          db.users.find(
+            usr =>
+              usr.id ===
+              item.userId
+          );
 
         if (user) {
-          user.accountStatus = 'active';
-          user.updatedAt = nowIso;
+          user.accountStatus =
+            'active';
+          user.updatedAt =
+            nowIso;
         }
       }
 
@@ -865,16 +961,20 @@ class AdminPortalService {
         );
 
       if (proof) {
-        proof.status = 'approved';
-        proof.reviewedAt = nowIso;
-        proof.reviewedBy = currentAdminId;
+        proof.status =
+          'approved';
+        proof.reviewedAt =
+          nowIso;
+        proof.reviewedBy =
+          currentAdminId;
       }
     });
 
-    // Reload fresh database state.
     await this.loadFromSupabase();
 
-    return { success: true };
+    return {
+      success: true
+    };
   }
 
   async rejectDeposit(
@@ -885,7 +985,10 @@ class AdminPortalService {
     success: boolean;
     error?: string;
   }> {
-    if (!reason || !reason.trim()) {
+    if (
+      !reason ||
+      !reason.trim()
+    ) {
       return {
         success: false,
         error:
@@ -896,7 +999,10 @@ class AdminPortalService {
     const uuidRegex =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-    if (!id || !uuidRegex.test(id)) {
+    if (
+      !id ||
+      !uuidRegex.test(id)
+    ) {
       return {
         success: false,
         error:
@@ -916,22 +1022,30 @@ class AdminPortalService {
     }
 
     const item =
-      this.deposits.find(d => d.id === id);
+      this.deposits.find(
+        d => d.id === id
+      );
 
-    const userId = item?.userId;
+    const userId =
+      item?.userId;
+
     const nowIso =
       new Date().toISOString();
 
-    const { error: proofErr } =
-      await supabase
-        .from('payment_proofs')
-        .update({
-          status: 'rejected',
-          rejection_reason: reason.trim(),
-          reviewed_at: nowIso,
-          reviewed_by: currentAdminId
-        })
-        .eq('id', id);
+    const {
+      error: proofErr
+    } = await supabase
+      .from('payment_proofs')
+      .update({
+        status: 'rejected',
+        rejection_reason:
+          reason.trim(),
+        reviewed_at:
+          nowIso,
+        reviewed_by:
+          currentAdminId
+      })
+      .eq('id', id);
 
     if (proofErr) {
       console.error(
@@ -948,14 +1062,17 @@ class AdminPortalService {
     }
 
     if (userId) {
-      const { error: profileError } =
-        await supabase
-          .from('profiles')
-          .update({
-            payment_proof_status: 'rejected',
-            updated_at: nowIso
-          })
-          .eq('id', userId);
+      const {
+        error: profileError
+      } = await supabase
+        .from('profiles')
+        .update({
+          payment_proof_status:
+            'rejected',
+          updated_at:
+            nowIso
+        })
+        .eq('id', userId);
 
       if (profileError) {
         console.warn(
@@ -966,32 +1083,56 @@ class AdminPortalService {
     }
 
     if (item) {
-      item.status = 'rejected';
+      item.status =
+        'rejected';
+
       item.rejectionReason =
         reason.trim();
-      item.reviewedAt = nowIso;
+
+      item.reviewedAt =
+        nowIso;
     }
 
     this.activities.unshift({
-      id: `act-${Date.now()}`,
-      type: 'deposit_rejected',
-      title: 'Payment rejected',
-      description: `Deposit rejected for ${item?.userName || 'Member'}. Reason: ${reason.trim()}`,
-      amount: item?.amount || 0,
+      id:
+        'act-' +
+        Date.now(),
+      type:
+        'deposit_rejected',
+      title:
+        'Payment rejected',
+      description:
+        'Deposit rejected for ' +
+        (item?.userName ||
+          'Member') +
+        '. Reason: ' +
+        reason.trim(),
+      amount:
+        item?.amount || 0,
       targetId: id,
       timestamp: nowIso,
       userFullName:
-        item?.userName || 'Member'
+        item?.userName ||
+        'Member'
     });
 
     this.notifications.unshift({
-      id: `notif-${Date.now()}`,
-      title: 'Payment rejected',
-      message: `Deposit for ${item?.userName || 'Member'} was rejected: ${reason.trim()}`,
+      id:
+        'notif-' +
+        Date.now(),
+      title:
+        'Payment rejected',
+      message:
+        'Deposit for ' +
+        (item?.userName ||
+          'Member') +
+        ' was rejected: ' +
+        reason.trim(),
       type: 'deposit',
       read: false,
       createdAt: nowIso,
-      actionUrl: '/admin/deposits'
+      actionUrl:
+        '/admin/deposits'
     });
 
     this.persist();
@@ -1013,10 +1154,15 @@ class AdminPortalService {
         );
 
       if (proof) {
-        proof.status = 'rejected';
+        proof.status =
+          'rejected';
+
         proof.rejectionReason =
           reason.trim();
-        proof.reviewedAt = nowIso;
+
+        proof.reviewedAt =
+          nowIso;
+
         proof.reviewedBy =
           currentAdminId;
       }
@@ -1024,7 +1170,9 @@ class AdminPortalService {
 
     await this.loadFromSupabase();
 
-    return { success: true };
+    return {
+      success: true
+    };
   }
 
   // ============================================================
@@ -1042,7 +1190,9 @@ class AdminPortalService {
       !statusFilter ||
       statusFilter === 'all'
     ) {
-      return [...this.withdrawals];
+      return [
+        ...this.withdrawals
+      ];
     }
 
     return this.withdrawals.filter(
@@ -1087,8 +1237,11 @@ class AdminPortalService {
         .from('withdrawals')
         .update({
           status: 'paid',
-          processed_at: nowIso,
-          remarks: `Ref: ${transactionRef}`
+          processed_at:
+            nowIso,
+          remarks:
+            'Ref: ' +
+            transactionRef
         })
         .eq('id', id);
 
@@ -1101,29 +1254,62 @@ class AdminPortalService {
       };
     }
 
-    item.status = 'approved';
-    item.processedAt = nowIso;
+    item.status =
+      'approved';
+
+    item.processedAt =
+      nowIso;
+
     item.transactionRef =
       transactionRef;
 
     this.activities.unshift({
-      id: `act-${Date.now()}`,
-      type: 'withdrawal_approved',
-      title: 'Withdrawal approved',
-      description: `Disbursed ${item.netAmount.toLocaleString()} PKR to ${item.userName} via ${item.withdrawalMethod} (Ref: ${transactionRef})`,
-      amount: item.grossAmount,
-      targetId: item.id,
-      timestamp: nowIso,
-      userFullName: item.userName
+      id:
+        'act-' +
+        Date.now(),
+      type:
+        'withdrawal_approved',
+      title:
+        'Withdrawal approved',
+      description:
+        'Disbursed ' +
+        item.netAmount.toLocaleString() +
+        ' PKR to ' +
+        item.userName +
+        ' via ' +
+        item.withdrawalMethod +
+        ' (Ref: ' +
+        transactionRef +
+        ')',
+      amount:
+        item.grossAmount,
+      targetId:
+        item.id,
+      timestamp:
+        nowIso,
+      userFullName:
+        item.userName
     });
 
     this.notifications.unshift({
-      id: `notif-${Date.now()}`,
-      title: 'Withdrawal approved',
-      message: `Payout of ${item.netAmount} PKR to ${item.userName} (${item.withdrawalMethod}) confirmed.`,
-      type: 'withdrawal',
+      id:
+        'notif-' +
+        Date.now(),
+      title:
+        'Withdrawal approved',
+      message:
+        'Payout of ' +
+        item.netAmount +
+        ' PKR to ' +
+        item.userName +
+        ' (' +
+        item.withdrawalMethod +
+        ') confirmed.',
+      type:
+        'withdrawal',
       read: false,
-      createdAt: nowIso,
+      createdAt:
+        nowIso,
       actionUrl:
         '/admin/withdrawals'
     });
@@ -1132,7 +1318,9 @@ class AdminPortalService {
 
     await this.loadFromSupabase();
 
-    return { success: true };
+    return {
+      success: true
+    };
   }
 
   async rejectWithdrawal(
@@ -1171,8 +1359,10 @@ class AdminPortalService {
       await supabase
         .from('withdrawals')
         .update({
-          status: 'rejected',
-          remarks: reason.trim()
+          status:
+            'rejected',
+          remarks:
+            reason.trim()
         })
         .eq('id', id);
 
@@ -1185,28 +1375,54 @@ class AdminPortalService {
       };
     }
 
-    item.status = 'rejected';
+    item.status =
+      'rejected';
+
     item.rejectionReason =
       reason.trim();
 
     this.activities.unshift({
-      id: `act-${Date.now()}`,
-      type: 'withdrawal_rejected',
-      title: 'Withdrawal rejected',
-      description: `Withdrawal of ${item.grossAmount.toLocaleString()} PKR rejected for ${item.userName}. Reason: ${reason.trim()}`,
-      amount: item.grossAmount,
-      targetId: item.id,
-      timestamp: nowIso,
-      userFullName: item.userName
+      id:
+        'act-' +
+        Date.now(),
+      type:
+        'withdrawal_rejected',
+      title:
+        'Withdrawal rejected',
+      description:
+        'Withdrawal of ' +
+        item.grossAmount.toLocaleString() +
+        ' PKR rejected for ' +
+        item.userName +
+        '. Reason: ' +
+        reason.trim(),
+      amount:
+        item.grossAmount,
+      targetId:
+        item.id,
+      timestamp:
+        nowIso,
+      userFullName:
+        item.userName
     });
 
     this.notifications.unshift({
-      id: `notif-${Date.now()}`,
-      title: 'Withdrawal rejected',
-      message: `Withdrawal request for ${item.userName} was rejected (${reason.trim()}).`,
-      type: 'withdrawal',
+      id:
+        'notif-' +
+        Date.now(),
+      title:
+        'Withdrawal rejected',
+      message:
+        'Withdrawal request for ' +
+        item.userName +
+        ' was rejected (' +
+        reason.trim() +
+        ').',
+      type:
+        'withdrawal',
       read: false,
-      createdAt: nowIso,
+      createdAt:
+        nowIso,
       actionUrl:
         '/admin/withdrawals'
     });
@@ -1215,7 +1431,9 @@ class AdminPortalService {
 
     await this.loadFromSupabase();
 
-    return { success: true };
+    return {
+      success: true
+    };
   }
 
   // ============================================================
@@ -1223,7 +1441,9 @@ class AdminPortalService {
   // ============================================================
 
   getRecentActivities(): AdminActivity[] {
-    return [...this.activities].slice(0, 15);
+    return [
+      ...this.activities
+    ].slice(0, 15);
   }
 
   // ============================================================
@@ -1231,7 +1451,9 @@ class AdminPortalService {
   // ============================================================
 
   getNotifications(): AdminNotification[] {
-    return [...this.notifications];
+    return [
+      ...this.notifications
+    ];
   }
 
   getUnreadNotificationsCount(): number {
@@ -1267,4 +1489,3 @@ class AdminPortalService {
 
 export const adminPortalService =
   new AdminPortalService();
-```
