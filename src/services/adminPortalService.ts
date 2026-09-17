@@ -334,10 +334,10 @@ class AdminPortalService {
         this.deposits = mappedDeposits;
 
         console.log(
-          `[AdminPortal] Loaded ${mappedDeposits.length} payment proof(s) from Supabase.`
-        );
-      }
-
+  '[AdminPortal] Loaded ' +
+    mappedDeposits.length +
+    ' payment proof(s) from Supabase.'
+);
       /*
        * ============================================================
        * 2. WITHDRAWALS
