@@ -441,8 +441,11 @@ class AdminPortalService {
       this.persist();
 
       console.log(
-        `[AdminPortal] Supabase sync complete. Deposits: ${this.deposits.length}, Withdrawals: ${this.withdrawals.length}`
-      );
+  '[AdminPortal] Supabase sync complete. Deposits: ' +
+    this.deposits.length +
+    ', Withdrawals: ' +
+    this.withdrawals.length
+);
     } catch (error) {
       console.error(
         '[AdminPortal] Supabase synchronization error:',
