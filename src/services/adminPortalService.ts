@@ -815,7 +815,7 @@ class AdminPortalService {
     }
 
     this.activities.unshift({
-      id: `act-${Date.now()}`,
+     src/services/adminPortalService.ts
       type: 'deposit_approved',
       title: 'Payment approved',
       description: `Payment of ${(item?.amount || 0).toLocaleString()} PKR approved for ${item?.userName || 'Member'} (Trx: ${item?.transactionId || id})`,
