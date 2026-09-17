@@ -1,872 +1,1011 @@
 import { devStore } from '../store/devStore';
+import { adminService } from './adminService';
 import { adminAuthService } from './adminAuthService';
 import { supabase } from '../lib/supabase';
+import { PayoutMethod, PaymentMethod } from '../types';
 
 export interface DepositItem {
   id: string;
   userId: string;
   userName: string;
-  email: string;
+  userEmail: string;
   amount: number;
-  method: string;
+  paymentMethod: string;
   transactionId: string;
-  proofImage?: string;
-  status: 'pending' | 'approved' | 'rejected';
+  senderName: string;
+  senderAccount: string;
+  receiptUrl: string;
+  userNotes?: string;
   createdAt: string;
-  reviewedAt?: string;
-  reviewedBy?: string;
-  reviewedByName?: string;
+  status: 'pending' | 'approved' | 'rejected';
   rejectionReason?: string;
+  reviewedAt?: string;
 }
 
 export interface WithdrawalItem {
   id: string;
   userId: string;
   userName: string;
-  email: string;
-  amount: number;
-  method: string;
-  accountDetails: string;
-  status: 'pending' | 'approved' | 'rejected';
+  userEmail: string;
+  grossAmount: number;
+  feeAmount: number;
+  netAmount: number;
+  withdrawalMethod: string;
+  accountTitle: string;
+  accountNumber: string;
+  userNote?: string;
   createdAt: string;
-  reviewedAt?: string;
-  reviewedBy?: string;
-  reviewedByName?: string;
+  status: 'pending' | 'approved' | 'rejected';
   rejectionReason?: string;
+  processedAt?: string;
+  transactionRef?: string;
 }
 
 export interface AdminActivity {
   id: string;
-  type: string;
+  type:
+    | 'deposit_uploaded'
+    | 'deposit_approved'
+    | 'deposit_rejected'
+    | 'withdrawal_requested'
+    | 'withdrawal_approved'
+    | 'withdrawal_rejected';
   title: string;
   description: string;
+  amount?: number;
+  targetId: string;
   timestamp: string;
-  adminId?: string;
-  adminName?: string;
+  userFullName?: string;
 }
 
 export interface AdminNotification {
   id: string;
   title: string;
   message: string;
-  type: 'info' | 'success' | 'warning' | 'error';
-  createdAt: string;
+  type: 'deposit' | 'withdrawal' | 'security' | 'system';
   read: boolean;
+  createdAt: string;
+  actionUrl?: string;
 }
 
 export interface DashboardSummary {
-  totalMembers: number;
-  activeMembers: number;
-  pendingDeposits: number;
-  pendingWithdrawals: number;
-  totalDeposits: number;
-  totalWithdrawals: number;
-  totalRevenue: number;
+  totalDepositsAmount: number;
+  totalDepositsCount: number;
+  pendingDepositsAmount: number;
+  pendingDepositsCount: number;
+  totalWithdrawalsAmount: number;
+  totalWithdrawalsCount: number;
+  pendingWithdrawalsAmount: number;
+  pendingWithdrawalsCount: number;
 }
 
-const STORAGE_KEY = 'dsn_admin_portal_v3';
-const ACTIVITY_KEY = 'dsn_admin_activity_v3';
-const NOTIFICATION_KEY = 'dsn_admin_notifications_v3';
+// Real Supabase storage keys - no demo data
+const LOCAL_STORAGE_DEPOSITS_KEY = 'dsn_admin_deposits_v3';
+const LOCAL_STORAGE_WITHDRAWALS_KEY = 'dsn_admin_withdrawals_v3';
+const LOCAL_STORAGE_ACTIVITIES_KEY = 'dsn_admin_activities_v3';
+const LOCAL_STORAGE_NOTIFS_KEY = 'dsn_admin_notifs_v3';
+
+// Empty initial states - no fake or demo records
+const INITIAL_DEPOSITS: DepositItem[] = [];
+const INITIAL_WITHDRAWALS: WithdrawalItem[] = [];
+const INITIAL_ACTIVITIES: AdminActivity[] = [];
+const INITIAL_NOTIFICATIONS: AdminNotification[] = [];
 
 class AdminPortalService {
   private deposits: DepositItem[] = [];
   private withdrawals: WithdrawalItem[] = [];
   private activities: AdminActivity[] = [];
   private notifications: AdminNotification[] = [];
-  private loadPromise: Promise<void> | null = null;
-  private realtimeChannel: ReturnType<typeof supabase.channel> | null = null;
+  private isLoadedFromSupabase = false;
 
   constructor() {
-    this.initLocalState();
+    this.init();
+    // Load real records from Supabase asynchronously
     this.loadFromSupabase();
-    this.setupRealtime();
   }
 
-  private initLocalState(): void {
+  private init() {
+    if (typeof window === 'undefined') return;
+
     try {
-      const stored = localStorage.getItem(STORAGE_KEY);
+      // Purge old demo storage keys if present
+      localStorage.removeItem('dsn_admin_deposits_v1');
+      localStorage.removeItem('dsn_admin_withdrawals_v1');
+      localStorage.removeItem('dsn_admin_activities_v1');
+      localStorage.removeItem('dsn_admin_notifs_v1');
 
-      if (stored) {
-        const parsed = JSON.parse(stored);
+      const savedDep = localStorage.getItem(LOCAL_STORAGE_DEPOSITS_KEY);
+      this.deposits = savedDep ? JSON.parse(savedDep) : [];
 
-        this.deposits = Array.isArray(parsed.deposits)
-          ? parsed.deposits
-          : [];
+      const savedWd = localStorage.getItem(LOCAL_STORAGE_WITHDRAWALS_KEY);
+      this.withdrawals = savedWd ? JSON.parse(savedWd) : [];
 
-        this.withdrawals = Array.isArray(parsed.withdrawals)
-          ? parsed.withdrawals
-          : [];
-      }
+      const savedAct = localStorage.getItem(LOCAL_STORAGE_ACTIVITIES_KEY);
+      this.activities = savedAct ? JSON.parse(savedAct) : [];
 
-      const storedActivities = localStorage.getItem(ACTIVITY_KEY);
+      const savedNot = localStorage.getItem(LOCAL_STORAGE_NOTIFS_KEY);
+      this.notifications = savedNot ? JSON.parse(savedNot) : [];
 
-      if (storedActivities) {
-        const parsedActivities = JSON.parse(storedActivities);
-
-        this.activities = Array.isArray(parsedActivities)
-          ? parsedActivities
-          : [];
-      }
-
-      const storedNotifications =
-        localStorage.getItem(NOTIFICATION_KEY);
-
-      if (storedNotifications) {
-        const parsedNotifications = JSON.parse(
-          storedNotifications
-        );
-
-        this.notifications = Array.isArray(parsedNotifications)
-          ? parsedNotifications
-          : [];
-      }
-    } catch (error) {
-      console.error(
-        'Failed to initialize admin local state:',
-        error
+      // Filter out any leftover fake IDs
+      this.deposits = this.deposits.filter(d => !d.id.startsWith('DEP-982'));
+      this.withdrawals = this.withdrawals.filter(w => !w.id.startsWith('WD-847'));
+      this.activities = this.activities.filter(
+        a =>
+          ![
+            'act-1',
+            'act-2',
+            'act-3',
+            'act-4',
+            'act-5',
+            'act-6',
+            'act-7'
+          ].includes(a.id)
       );
+      this.notifications = this.notifications.filter(
+        n =>
+          ![
+            'notif-1',
+            'notif-2',
+            'notif-3',
+            'notif-4',
+            'notif-5',
+            'notif-6'
+          ].includes(n.id)
+      );
+    } catch {
+      this.deposits = [];
+      this.withdrawals = [];
+      this.activities = [];
+      this.notifications = [];
     }
   }
 
-  private persist(): void {
+  /**
+   * Fetch real deposits, withdrawals and data directly from Supabase
+   */
+  async loadFromSupabase(): Promise<void> {
     try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          deposits: this.deposits,
-          withdrawals: this.withdrawals,
-        })
-      );
+      // 1. Fetch real deposit/payment proofs
+      const { data: proofs, error: pError } = await supabase
+        .from('payment_proofs')
+        .select('*')
+        .order('date_submitted', { ascending: false });
 
-      localStorage.setItem(
-        ACTIVITY_KEY,
-        JSON.stringify(this.activities)
-      );
-
-      localStorage.setItem(
-        NOTIFICATION_KEY,
-        JSON.stringify(this.notifications)
-      );
-    } catch (error) {
-      console.error(
-        'Failed to persist admin portal state:',
-        error
-      );
-    }
-  }
-
-  private async loadFromSupabase(): Promise<void> {
-    if (this.loadPromise) {
-      return this.loadPromise;
-    }
-
-    this.loadPromise = this.performSupabaseLoad().finally(() => {
-      this.loadPromise = null;
-    });
-
-    return this.loadPromise;
-  }
-
-  private async performSupabaseLoad(): Promise<void> {
-    try {
-      const [paymentResult, withdrawalResult] =
-        await Promise.all([
-          supabase
-            .from('payment_proofs')
-            .select('*')
-            .order('created_at', { ascending: false }),
-
-          supabase
-            .from('withdrawals')
-            .select('*')
-            .order('created_at', { ascending: false }),
-        ]);
-
-      if (paymentResult.error) {
-        console.error(
-          'Failed to load payment proofs:',
-          paymentResult.error
-        );
-      } else {
-        this.deposits = (paymentResult.data || []).map(
-          (item: any) => ({
-            id: item.id,
-            userId: item.user_id,
-            userName:
-              item.user_name ||
-              item.full_name ||
-              item.name ||
-              'Unknown User',
-            email: item.email || '',
-            amount: Number(item.amount || 0),
-            method:
-              item.payment_method ||
-              item.method ||
-              'Unknown',
-            transactionId:
-              item.transaction_id ||
-              item.transactionId ||
-              '',
-            proofImage:
-              item.proof_image ||
-              item.proof_url ||
-              item.payment_proof ||
-              undefined,
-            status:
-              item.status === 'approved'
-                ? 'approved'
-                : item.status === 'rejected'
-                  ? 'rejected'
-                  : 'pending',
-            createdAt:
-              item.created_at ||
-              new Date().toISOString(),
-            reviewedAt:
-              item.reviewed_at || undefined,
-            reviewedBy:
-              item.reviewed_by || undefined,
-            reviewedByName:
-              item.reviewed_by_name || undefined,
-            rejectionReason:
-              item.rejection_reason || undefined,
-          })
-        );
+      if (!pError && Array.isArray(proofs)) {
+        this.deposits = proofs.map(p => ({
+          id: p.id,
+          userId: p.user_id,
+          userName: p.user_full_name || 'Member',
+          userEmail: p.user_email || '',
+          amount: Number(p.amount) || 1300,
+          paymentMethod: p.payment_method || 'Direct Transfer',
+          transactionId: p.transaction_id || p.id,
+          senderName: p.sender_name || p.user_full_name || '',
+          senderAccount: p.sender_account || '',
+          receiptUrl: p.screenshot_url || '',
+          userNotes: p.notes || '',
+          createdAt:
+            p.date_submitted ||
+            p.created_at ||
+            new Date().toISOString(),
+          status:
+            p.status === 'verified' || p.status === 'approved'
+              ? 'approved'
+              : p.status === 'rejected'
+                ? 'rejected'
+                : 'pending',
+          rejectionReason: p.rejection_reason,
+          reviewedAt: p.reviewed_at
+        }));
       }
 
-      if (withdrawalResult.error) {
-        console.error(
-          'Failed to load withdrawals:',
-          withdrawalResult.error
-        );
-      } else {
-        this.withdrawals = (withdrawalResult.data || []).map(
-          (item: any) => ({
-            id: item.id,
-            userId: item.user_id,
-            userName:
-              item.user_name ||
-              item.full_name ||
-              item.name ||
-              'Unknown User',
-            email: item.email || '',
-            amount: Number(item.amount || 0),
-            method:
-              item.withdrawal_method ||
-              item.method ||
-              'Unknown',
-            accountDetails:
-              item.account_details ||
-              item.accountDetails ||
-              '',
-            status:
-              item.status === 'approved'
-                ? 'approved'
-                : item.status === 'rejected'
-                  ? 'rejected'
-                  : 'pending',
-            createdAt:
-              item.created_at ||
-              new Date().toISOString(),
-            reviewedAt:
-              item.reviewed_at || undefined,
-            reviewedBy:
-              item.reviewed_by || undefined,
-            reviewedByName:
-              item.reviewed_by_name || undefined,
-            rejectionReason:
-              item.rejection_reason || undefined,
-          })
-        );
+      // 2. Fetch real withdrawals
+      const { data: wds, error: wError } = await supabase
+        .from('withdrawals')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (!wError && Array.isArray(wds)) {
+        this.withdrawals = wds.map(w => ({
+          id: w.id,
+          userId: w.user_id,
+          userName: w.user_full_name || 'Member',
+          userEmail: '',
+          grossAmount:
+            Number(w.gross_amount) || Number(w.amount) || 0,
+          feeAmount: Number(w.fee_amount) || 0,
+          netAmount: Number(w.net_amount) || 0,
+          withdrawalMethod:
+            w.payment_method || 'Mobile Wallet',
+          accountTitle: w.account_title || '',
+          accountNumber: w.account_number || '',
+          userNote: w.user_note || '',
+          createdAt:
+            w.created_at || new Date().toISOString(),
+          status:
+            w.status === 'approved' || w.status === 'paid'
+              ? 'approved'
+              : w.status === 'rejected'
+                ? 'rejected'
+                : 'pending',
+          rejectionReason:
+            w.remarks || w.rejection_reason,
+          processedAt: w.processed_at,
+          transactionRef: w.remarks
+        }));
       }
 
+      this.isLoadedFromSupabase = true;
       this.persist();
-    } catch (error) {
-      console.error(
-        'Failed to load admin data from Supabase:',
-        error
-      );
-    }
-  }
-
-  private setupRealtime(): void {
-    try {
-      if (this.realtimeChannel) {
-        supabase.removeChannel(this.realtimeChannel);
-      }
-
-      this.realtimeChannel = supabase
-        .channel('admin-portal-realtime')
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'payment_proofs',
-          },
-          () => {
-            window.setTimeout(() => {
-              void this.loadFromSupabase();
-            }, 300);
-          }
-        )
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'withdrawals',
-          },
-          () => {
-            window.setTimeout(() => {
-              void this.loadFromSupabase();
-            }, 300);
-          }
-        )
-        .subscribe();
-    } catch (error) {
-      console.error(
-        'Failed to setup admin realtime:',
-        error
+    } catch (err) {
+      console.warn(
+        'Supabase data synchronization error:',
+        err
       );
     }
   }
 
   private async resolveAdminId(): Promise<string | null> {
+    const uuidRegex =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    // 1. Check stored admin from adminAuthService
+    const storedAdmin =
+      adminAuthService.getCurrentAdmin();
+
+    if (
+      storedAdmin?.id &&
+      uuidRegex.test(storedAdmin.id)
+    ) {
+      return storedAdmin.id;
+    }
+
+    // 2. Check active Supabase Auth session
     try {
-      const currentAdmin =
-        adminAuthService.getCurrentAdmin();
+      const { data: sessionData } =
+        await supabase.auth.getSession();
 
-      if (currentAdmin?.id) {
-        return currentAdmin.id;
+      if (
+        sessionData?.session?.user?.id &&
+        uuidRegex.test(sessionData.session.user.id)
+      ) {
+        return sessionData.session.user.id;
       }
+    } catch (err) {
+      console.warn(
+        'resolveAdminId: error checking session:',
+        err
+      );
+    }
 
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+    // 3. Check getUser
+    try {
+      const { data: userData } =
+        await supabase.auth.getUser();
 
-      if (session?.user?.id) {
-        return session.user.id;
+      if (
+        userData?.user?.id &&
+        uuidRegex.test(userData.user.id)
+      ) {
+        return userData.user.id;
       }
+    } catch (err) {
+      console.warn(
+        'resolveAdminId: error checking auth user:',
+        err
+      );
+    }
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+    // 4. Query profiles table for an admin profile
+    try {
+      const { data: adminProf } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('role', 'admin')
+        .limit(1)
+        .maybeSingle();
 
-      if (user?.id) {
-        return user.id;
+      if (
+        adminProf?.id &&
+        uuidRegex.test(adminProf.id)
+      ) {
+        return adminProf.id;
       }
+    } catch (err) {
+      console.warn(
+        'resolveAdminId: error querying admin profile fallback:',
+        err
+      );
+    }
 
-      return null;
-    } catch (error) {
-      console.error(
-        'Failed to resolve admin ID:',
-        error
+    return null;
+  }
+
+  private persist() {
+    if (typeof window === 'undefined') return;
+
+    try {
+      localStorage.setItem(
+        LOCAL_STORAGE_DEPOSITS_KEY,
+        JSON.stringify(this.deposits)
       );
 
-      return null;
+      localStorage.setItem(
+        LOCAL_STORAGE_WITHDRAWALS_KEY,
+        JSON.stringify(this.withdrawals)
+      );
+
+      localStorage.setItem(
+        LOCAL_STORAGE_ACTIVITIES_KEY,
+        JSON.stringify(this.activities)
+      );
+
+      localStorage.setItem(
+        LOCAL_STORAGE_NOTIFS_KEY,
+        JSON.stringify(this.notifications)
+      );
+    } catch (e) {
+      console.warn(
+        'Could not persist admin portal data:',
+        e
+      );
     }
   }
 
-  getDeposits(): DepositItem[] {
-    return [...this.deposits];
-  }
-
-  getWithdrawals(): WithdrawalItem[] {
-    return [...this.withdrawals];
-  }
-
-  getActivities(): AdminActivity[] {
-    return [...this.activities];
-  }
-
-  getNotifications(): AdminNotification[] {
-    return [...this.notifications];
-  }
-
-  getUnreadNotificationsCount(): number {
-    return this.notifications.filter(
-      notification => !notification.read
-    ).length;
-  }
-
+  // Summary Metrics
   getDashboardSummary(): DashboardSummary {
+    const totalDeposits = this.deposits;
+
+    const totalDepositsAmount = totalDeposits
+      .filter(d => d.status === 'approved')
+      .reduce((sum, d) => sum + d.amount, 0);
+
     const pendingDeposits = this.deposits.filter(
-      item => item.status === 'pending'
+      d => d.status === 'pending'
     );
 
-    const pendingWithdrawals = this.withdrawals.filter(
-      item => item.status === 'pending'
-    );
-
-    const totalDeposits = this.deposits
-      .filter(item => item.status === 'approved')
-      .reduce(
-        (total, item) => total + Number(item.amount || 0),
+    const pendingDepositsAmount =
+      pendingDeposits.reduce(
+        (sum, d) => sum + d.amount,
         0
       );
 
-    const totalWithdrawals = this.withdrawals
-      .filter(item => item.status === 'approved')
-      .reduce(
-        (total, item) => total + Number(item.amount || 0),
+    const totalWithdrawals = this.withdrawals;
+
+    const totalWithdrawalsAmount =
+      totalWithdrawals
+        .filter(w => w.status === 'approved')
+        .reduce(
+          (sum, w) => sum + w.grossAmount,
+          0
+        );
+
+    const pendingWithdrawals =
+      this.withdrawals.filter(
+        w => w.status === 'pending'
+      );
+
+    const pendingWithdrawalsAmount =
+      pendingWithdrawals.reduce(
+        (sum, w) => sum + w.grossAmount,
         0
       );
 
     return {
-      totalMembers: 0,
-      activeMembers: 0,
-      pendingDeposits: pendingDeposits.length,
-      pendingWithdrawals: pendingWithdrawals.length,
-      totalDeposits,
-      totalWithdrawals,
-      totalRevenue: totalDeposits - totalWithdrawals,
+      totalDepositsAmount,
+      totalDepositsCount:
+        totalDeposits.filter(
+          d => d.status === 'approved'
+        ).length,
+      pendingDepositsAmount,
+      pendingDepositsCount:
+        pendingDeposits.length,
+      totalWithdrawalsAmount,
+      totalWithdrawalsCount:
+        totalWithdrawals.filter(
+          w => w.status === 'approved'
+        ).length,
+      pendingWithdrawalsAmount,
+      pendingWithdrawalsCount:
+        pendingWithdrawals.length
     };
   }
 
-  async approveDeposit(
+  // Deposits
+  getDeposits(
+    statusFilter?:
+      | 'all'
+      | 'pending'
+      | 'approved'
+      | 'rejected'
+  ): DepositItem[] {
+    const list = [...this.deposits];
+
+    if (
+      !statusFilter ||
+      statusFilter === 'all'
+    ) {
+      return list;
+    }
+
+    return list.filter(
+      d => d.status === statusFilter
+    );
+  }
+
+  getDepositById(
     id: string
-  ): Promise<{ success: boolean; error?: string }> {
-    try {
-      if (!id) {
-        return {
-          success: false,
-          error: 'Invalid payment proof ID.',
-        };
-      }
+  ): DepositItem | undefined {
+    return this.deposits.find(
+      d => d.id === id
+    );
+  }
 
-      const currentAdminId =
-        await this.resolveAdminId();
+  async approveDeposit(
+    id: string,
+    actorName = 'Central Admin'
+  ): Promise<{
+    success: boolean;
+    error?: string;
+  }> {
+    const uuidRegex =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-      if (!currentAdminId) {
-        return {
-          success: false,
-          error: 'Admin session not found.',
-        };
-      }
-
-      const { error } = await supabase.rpc(
-        'admin_approve_payment',
-        {
-          p_proof_id: id,
-          p_actor_id: currentAdminId,
-        }
-      );
-
-      if (error) {
-        console.error(
-          'Approve deposit RPC error:',
-          error
-        );
-
-        return {
-          success: false,
-          error:
-            error.message ||
-            'Failed to approve payment.',
-        };
-      }
-
-      const depositIndex = this.deposits.findIndex(
-        item => item.id === id
-      );
-
-      if (depositIndex !== -1) {
-        const deposit = this.deposits[depositIndex];
-
-        this.deposits[depositIndex] = {
-          ...deposit,
-          status: 'approved',
-          reviewedAt: new Date().toISOString(),
-          reviewedBy: currentAdminId,
-        };
-
-        this.activities.unshift({
-          id: crypto.randomUUID(),
-          type: 'deposit_approved',
-          title: 'Deposit Approved',
-          description: `${deposit.userName}'s deposit of ${deposit.amount} was approved.`,
-          timestamp: new Date().toISOString(),
-          adminId: currentAdminId,
-          adminName:
-            adminAuthService.getCurrentAdmin()?.name ||
-            'Admin',
-        });
-
-        this.notifications.unshift({
-          id: crypto.randomUUID(),
-          title: 'Deposit Approved',
-          message: `Deposit from ${deposit.userName} has been approved.`,
-          type: 'success',
-          createdAt: new Date().toISOString(),
-          read: false,
-        });
-      }
-
-      devStore.save({
-        adminDeposits: this.deposits,
-        adminWithdrawals: this.withdrawals,
-      });
-
-      this.persist();
-
+    if (!id || !uuidRegex.test(id)) {
       return {
-        success: true,
+        success: false,
+        error:
+          'Invalid payment proof ID: Must be a valid UUID.'
       };
-    } catch (error: any) {
+    }
+
+    // 1. Resolve administrator UUID
+    const currentAdminId =
+      await this.resolveAdminId();
+
+    if (!currentAdminId) {
+      return {
+        success: false,
+        error:
+          'Unauthorized: Valid administrator UUID is required to execute database activation.'
+      };
+    }
+
+    // 2. Call existing Supabase RPC
+    const {
+      data: rpcData,
+      error: rpcErr
+    } = await supabase.rpc(
+      'admin_approve_payment',
+      {
+        p_proof_id: id,
+        p_actor_id: currentAdminId
+      }
+    );
+
+    if (rpcErr) {
       console.error(
-        'Failed to approve deposit:',
-        error
+        'Supabase RPC admin_approve_payment failed:',
+        rpcErr
       );
 
       return {
         success: false,
         error:
-          error?.message ||
-          'Failed to approve deposit.',
+          rpcErr.message ||
+          'Database approval RPC failed.'
       };
     }
+
+    const rpcResult = rpcData as {
+      success?: boolean;
+      error?: string;
+      message?: string;
+    } | null;
+
+    if (
+      !rpcResult ||
+      rpcResult.success === false
+    ) {
+      const errMsg =
+        rpcResult?.error ||
+        'Database rejected payment proof approval.';
+
+      console.error(
+        'admin_approve_payment validation error:',
+        errMsg
+      );
+
+      return {
+        success: false,
+        error: errMsg
+      };
+    }
+
+    // 3. ONLY after database success, update local state
+    const item = this.deposits.find(
+      d => d.id === id
+    );
+
+    const nowIso =
+      new Date().toISOString();
+
+    if (item) {
+      item.status = 'approved';
+      item.reviewedAt = nowIso;
+    }
+
+    this.activities.unshift({
+      id: `act-${Date.now()}`,
+      type: 'deposit_approved',
+      title: 'Payment approved',
+      description: `Payment of ${(item?.amount || 1300).toLocaleString()} PKR approved for ${item?.userName || 'Member'} (Trx: ${item?.transactionId || id})`,
+      amount: item?.amount || 1300,
+      targetId: id,
+      timestamp: nowIso,
+      userFullName:
+        item?.userName || 'Member'
+    });
+
+    this.notifications.unshift({
+      id: `notif-${Date.now()}`,
+      title: 'Payment approved',
+      message: `Deposit of ${item?.amount || 1300} PKR for ${item?.userName || 'Member'} was verified and approved by ${actorName}.`,
+      type: 'deposit',
+      read: false,
+      createdAt: nowIso,
+      actionUrl: '/admin/deposits'
+    });
+
+    this.persist();
+
+    // Sync to devStore
+    devStore.save(db => {
+      if (item?.userId) {
+        if (db.profiles[item.userId]) {
+          db.profiles[
+            item.userId
+          ].accountStatus = 'active';
+
+          db.profiles[
+            item.userId
+          ].paymentProofStatus = 'approved';
+        }
+
+        const u = db.users.find(
+          usr => usr.id === item.userId
+        );
+
+        if (u) {
+          u.accountStatus = 'active';
+          u.updatedAt = nowIso;
+        }
+      }
+
+      const p =
+        db.paymentProofs.find(
+          proof => proof.id === id
+        );
+
+      if (p) {
+        p.status = 'approved';
+        p.reviewedAt = nowIso;
+        p.reviewedBy = currentAdminId;
+      }
+    });
+
+    return {
+      success: true
+    };
   }
 
   async rejectDeposit(
     id: string,
-    reason?: string
-  ): Promise<{ success: boolean; error?: string }> {
-    try {
-      if (!id) {
-        return {
-          success: false,
-          error: 'Invalid payment proof ID.',
-        };
-      }
-
-      const currentAdminId =
-        await this.resolveAdminId();
-
-      if (!currentAdminId) {
-        return {
-          success: false,
-          error: 'Admin session not found.',
-        };
-      }
-
-      const now = new Date().toISOString();
-
-      const { error } = await supabase
-        .from('payment_proofs')
-        .update({
-          status: 'rejected',
-          reviewed_at: now,
-          reviewed_by: currentAdminId,
-          rejection_reason: reason || null,
-        })
-        .eq('id', id);
-
-      if (error) {
-        console.error(
-          'Reject deposit error:',
-          error
-        );
-
-        return {
-          success: false,
-          error:
-            error.message ||
-            'Failed to reject payment.',
-        };
-      }
-
-      const depositIndex = this.deposits.findIndex(
-        item => item.id === id
-      );
-
-      if (depositIndex !== -1) {
-        const deposit = this.deposits[depositIndex];
-
-        this.deposits[depositIndex] = {
-          ...deposit,
-          status: 'rejected',
-          reviewedAt: now,
-          reviewedBy: currentAdminId,
-          rejectionReason: reason,
-        };
-
-        this.activities.unshift({
-          id: crypto.randomUUID(),
-          type: 'deposit_rejected',
-          title: 'Deposit Rejected',
-          description: `${deposit.userName}'s deposit of ${deposit.amount} was rejected.`,
-          timestamp: now,
-          adminId: currentAdminId,
-          adminName:
-            adminAuthService.getCurrentAdmin()?.name ||
-            'Admin',
-        });
-
-        this.notifications.unshift({
-          id: crypto.randomUUID(),
-          title: 'Deposit Rejected',
-          message: `Deposit from ${deposit.userName} has been rejected.`,
-          type: 'warning',
-          createdAt: now,
-          read: false,
-        });
-      }
-
-      devStore.save({
-        adminDeposits: this.deposits,
-        adminWithdrawals: this.withdrawals,
-      });
-
-      this.persist();
-
+    reason: string,
+    actorName = 'Central Admin'
+  ): Promise<{
+    success: boolean;
+    error?: string;
+  }> {
+    if (
+      !reason ||
+      !reason.trim()
+    ) {
       return {
-        success: true,
+        success: false,
+        error:
+          'Please specify a rejection reason for the member.'
       };
-    } catch (error: any) {
+    }
+
+    const uuidRegex =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    if (!id || !uuidRegex.test(id)) {
+      return {
+        success: false,
+        error:
+          'Invalid payment proof ID: Must be a valid UUID.'
+      };
+    }
+
+    // 1. Resolve administrator UUID
+    const currentAdminId =
+      await this.resolveAdminId();
+
+    if (!currentAdminId) {
+      return {
+        success: false,
+        error:
+          'Unauthorized: Valid administrator UUID is required to reject payment proof.'
+      };
+    }
+
+    const item = this.deposits.find(
+      d => d.id === id
+    );
+
+    const userId = item?.userId;
+
+    const nowIso =
+      new Date().toISOString();
+
+    // 2. Update public.payment_proofs
+    const {
+      error: proofErr
+    } = await supabase
+      .from('payment_proofs')
+      .update({
+        status: 'rejected',
+        rejection_reason:
+          reason.trim(),
+        reviewed_at: nowIso,
+        reviewed_by:
+          currentAdminId
+      })
+      .eq('id', id);
+
+    if (proofErr) {
       console.error(
-        'Failed to reject deposit:',
-        error
+        'Supabase error rejecting payment_proof:',
+        proofErr
       );
 
       return {
         success: false,
         error:
-          error?.message ||
-          'Failed to reject deposit.',
+          proofErr.message ||
+          'Database update failed for payment proof rejection.'
       };
     }
+
+    // 3. Update public.profiles
+    if (userId) {
+      const {
+        error: profErr
+      } = await supabase
+        .from('profiles')
+        .update({
+          payment_proof_status:
+            'rejected',
+          updated_at: nowIso
+        })
+        .eq('id', userId);
+
+      if (profErr) {
+        console.warn(
+          'Could not update profile payment_proof_status on rejection:',
+          profErr
+        );
+      }
+    }
+
+    // 4. ONLY after database success, update local state
+    if (item) {
+      item.status = 'rejected';
+      item.rejectionReason =
+        reason.trim();
+      item.reviewedAt = nowIso;
+    }
+
+    this.activities.unshift({
+      id: `act-${Date.now()}`,
+      type: 'deposit_rejected',
+      title: 'Payment rejected',
+      description: `Deposit rejected for ${item?.userName || 'Member'}. Reason: ${reason.trim()}`,
+      amount: item?.amount || 1300,
+      targetId: id,
+      timestamp: nowIso,
+      userFullName:
+        item?.userName || 'Member'
+    });
+
+    this.notifications.unshift({
+      id: `notif-${Date.now()}`,
+      title: 'Payment rejected',
+      message: `Deposit for ${item?.userName || 'Member'} was rejected: ${reason.trim()}`,
+      type: 'deposit',
+      read: false,
+      createdAt: nowIso,
+      actionUrl: '/admin/deposits'
+    });
+
+    this.persist();
+
+    // Sync to devStore
+    devStore.save(db => {
+      if (
+        userId &&
+        db.profiles[userId]
+      ) {
+        db.profiles[
+          userId
+        ].paymentProofStatus =
+          'rejected';
+      }
+
+      const p =
+        db.paymentProofs.find(
+          proof => proof.id === id
+        );
+
+      if (p) {
+        p.status = 'rejected';
+        p.rejectionReason =
+          reason.trim();
+        p.reviewedAt = nowIso;
+        p.reviewedBy =
+          currentAdminId;
+      }
+    });
+
+    return {
+      success: true
+    };
+  }
+
+  // Withdrawals
+  getWithdrawals(
+    statusFilter?:
+      | 'all'
+      | 'pending'
+      | 'approved'
+      | 'rejected'
+  ): WithdrawalItem[] {
+    if (
+      !statusFilter ||
+      statusFilter === 'all'
+    ) {
+      return [...this.withdrawals];
+    }
+
+    return this.withdrawals.filter(
+      w => w.status === statusFilter
+    );
+  }
+
+  getWithdrawalById(
+    id: string
+  ): WithdrawalItem | undefined {
+    return this.withdrawals.find(
+      w => w.id === id
+    );
   }
 
   async approveWithdrawal(
-    id: string
-  ): Promise<{ success: boolean; error?: string }> {
-    try {
-      if (!id) {
-        return {
-          success: false,
-          error: 'Invalid withdrawal ID.',
-        };
-      }
+    id: string,
+    transactionRef = 'MANUAL-PAYOUT',
+    actorName = 'Central Admin'
+  ): Promise<{
+    success: boolean;
+    error?: string;
+  }> {
+    const item =
+      this.withdrawals.find(
+        w => w.id === id
+      );
 
-      const currentAdminId =
-        await this.resolveAdminId();
-
-      if (!currentAdminId) {
-        return {
-          success: false,
-          error: 'Admin session not found.',
-        };
-      }
-
-      const now = new Date().toISOString();
-
-      const { error } = await supabase
-        .from('withdrawals')
-        .update({
-          status: 'approved',
-          reviewed_at: now,
-          reviewed_by: currentAdminId,
-        })
-        .eq('id', id);
-
-      if (error) {
-        console.error(
-          'Approve withdrawal error:',
-          error
-        );
-
-        return {
-          success: false,
-          error:
-            error.message ||
-            'Failed to approve withdrawal.',
-        };
-      }
-
-      const withdrawalIndex =
-        this.withdrawals.findIndex(
-          item => item.id === id
-        );
-
-      if (withdrawalIndex !== -1) {
-        const withdrawal =
-          this.withdrawals[withdrawalIndex];
-
-        this.withdrawals[withdrawalIndex] = {
-          ...withdrawal,
-          status: 'approved',
-          reviewedAt: now,
-          reviewedBy: currentAdminId,
-        };
-
-        this.activities.unshift({
-          id: crypto.randomUUID(),
-          type: 'withdrawal_approved',
-          title: 'Withdrawal Approved',
-          description: `${withdrawal.userName}'s withdrawal of ${withdrawal.amount} was approved.`,
-          timestamp: now,
-          adminId: currentAdminId,
-          adminName:
-            adminAuthService.getCurrentAdmin()?.name ||
-            'Admin',
-        });
-
-        this.notifications.unshift({
-          id: crypto.randomUUID(),
-          title: 'Withdrawal Approved',
-          message: `Withdrawal from ${withdrawal.userName} has been approved.`,
-          type: 'success',
-          createdAt: now,
-          read: false,
-        });
-      }
-
-      devStore.save({
-        adminDeposits: this.deposits,
-        adminWithdrawals: this.withdrawals,
-      });
-
-      this.persist();
-
+    if (!item) {
       return {
-        success: true,
+        success: false,
+        error:
+          'Withdrawal request not found.'
       };
-    } catch (error: any) {
+    }
+
+    const nowIso =
+      new Date().toISOString();
+
+    // Persist to Supabase
+    const {
+      error: wErr
+    } = await supabase
+      .from('withdrawals')
+      .update({
+        status: 'paid',
+        processed_at: nowIso,
+        remarks: `Ref: ${transactionRef}`
+      })
+      .eq('id', id);
+
+    if (wErr) {
       console.error(
-        'Failed to approve withdrawal:',
-        error
+        'Supabase withdrawal approve error:',
+        wErr
       );
 
       return {
         success: false,
         error:
-          error?.message ||
-          'Failed to approve withdrawal.',
+          wErr.message ||
+          'Database update failed for withdrawal approval.'
       };
     }
+
+    item.status = 'approved';
+    item.processedAt = nowIso;
+    item.transactionRef =
+      transactionRef;
+
+    // Add activity
+    this.activities.unshift({
+      id: `act-${Date.now()}`,
+      type: 'withdrawal_approved',
+      title: 'Withdrawal approved',
+      description: `Disbursed ${item.netAmount.toLocaleString()} PKR to ${item.userName} via ${item.withdrawalMethod} (Ref: ${transactionRef})`,
+      amount: item.grossAmount,
+      targetId: item.id,
+      timestamp: nowIso,
+      userFullName:
+        item.userName
+    });
+
+    // Add notification
+    this.notifications.unshift({
+      id: `notif-${Date.now()}`,
+      title: 'Withdrawal approved',
+      message: `Payout of ${item.netAmount} PKR to ${item.userName} (${item.withdrawalMethod}) confirmed.`,
+      type: 'withdrawal',
+      read: false,
+      createdAt: nowIso,
+      actionUrl:
+        '/admin/withdrawals'
+    });
+
+    this.persist();
+
+    return {
+      success: true
+    };
   }
 
   async rejectWithdrawal(
     id: string,
-    reason?: string
-  ): Promise<{ success: boolean; error?: string }> {
-    try {
-      if (!id) {
-        return {
-          success: false,
-          error: 'Invalid withdrawal ID.',
-        };
-      }
+    reason: string,
+    actorName = 'Central Admin'
+  ): Promise<{
+    success: boolean;
+    error?: string;
+  }> {
+    const item =
+      this.withdrawals.find(
+        w => w.id === id
+      );
 
-      const currentAdminId =
-        await this.resolveAdminId();
-
-      if (!currentAdminId) {
-        return {
-          success: false,
-          error: 'Admin session not found.',
-        };
-      }
-
-      const now = new Date().toISOString();
-
-      const { error } = await supabase
-        .from('withdrawals')
-        .update({
-          status: 'rejected',
-          reviewed_at: now,
-          reviewed_by: currentAdminId,
-          rejection_reason: reason || null,
-        })
-        .eq('id', id);
-
-      if (error) {
-        console.error(
-          'Reject withdrawal error:',
-          error
-        );
-
-        return {
-          success: false,
-          error:
-            error.message ||
-            'Failed to reject withdrawal.',
-        };
-      }
-
-      const withdrawalIndex =
-        this.withdrawals.findIndex(
-          item => item.id === id
-        );
-
-      if (withdrawalIndex !== -1) {
-        const withdrawal =
-          this.withdrawals[withdrawalIndex];
-
-        this.withdrawals[withdrawalIndex] = {
-          ...withdrawal,
-          status: 'rejected',
-          reviewedAt: now,
-          reviewedBy: currentAdminId,
-          rejectionReason: reason,
-        };
-
-        this.activities.unshift({
-          id: crypto.randomUUID(),
-          type: 'withdrawal_rejected',
-          title: 'Withdrawal Rejected',
-          description: `${withdrawal.userName}'s withdrawal of ${withdrawal.amount} was rejected.`,
-          timestamp: now,
-          adminId: currentAdminId,
-          adminName:
-            adminAuthService.getCurrentAdmin()?.name ||
-            'Admin',
-        });
-
-        this.notifications.unshift({
-          id: crypto.randomUUID(),
-          title: 'Withdrawal Rejected',
-          message: `Withdrawal from ${withdrawal.userName} has been rejected.`,
-          type: 'warning',
-          createdAt: now,
-          read: false,
-        });
-      }
-
-      devStore.save({
-        adminDeposits: this.deposits,
-        adminWithdrawals: this.withdrawals,
-      });
-
-      this.persist();
-
+    if (!item) {
       return {
-        success: true,
+        success: false,
+        error:
+          'Withdrawal request not found.'
       };
-    } catch (error: any) {
+    }
+
+    const nowIso =
+      new Date().toISOString();
+
+    // Persist to Supabase
+    const {
+      error: wErr
+    } = await supabase
+      .from('withdrawals')
+      .update({
+        status: 'rejected',
+        remarks: reason
+      })
+      .eq('id', id);
+
+    if (wErr) {
       console.error(
-        'Failed to reject withdrawal:',
-        error
+        'Supabase withdrawal reject error:',
+        wErr
       );
 
       return {
         success: false,
         error:
-          error?.message ||
-          'Failed to reject withdrawal.',
+          wErr.message ||
+          'Database update failed for withdrawal rejection.'
       };
     }
+
+    item.status = 'rejected';
+    item.rejectionReason =
+      reason;
+
+    // Add activity
+    this.activities.unshift({
+      id: `act-${Date.now()}`,
+      type: 'withdrawal_rejected',
+      title: 'Withdrawal rejected',
+      description: `Withdrawal of ${item.grossAmount.toLocaleString()} PKR rejected for ${item.userName}. Reason: ${reason}`,
+      amount: item.grossAmount,
+      targetId: item.id,
+      timestamp: nowIso,
+      userFullName:
+        item.userName
+    });
+
+    // Add notification
+    this.notifications.unshift({
+      id: `notif-${Date.now()}`,
+      title: 'Withdrawal rejected',
+      message: `Withdrawal request for ${item.userName} was rejected (${reason}).`,
+      type: 'withdrawal',
+      read: false,
+      createdAt: nowIso,
+      actionUrl:
+        '/admin/withdrawals'
+    });
+
+    this.persist();
+
+    return {
+      success: true
+    };
   }
 
-  async refresh(): Promise<void> {
-    await this.loadFromSupabase();
+  // Activities
+  getRecentActivities(): AdminActivity[] {
+    return [
+      ...this.activities
+    ].slice(0, 15);
   }
 
-  destroy(): void {
-    if (this.realtimeChannel) {
-      supabase.removeChannel(this.realtimeChannel);
-      this.realtimeChannel = null;
+  // Notifications
+  getNotifications(): AdminNotification[] {
+    return [
+      ...this.notifications
+    ];
+  }
+
+  getUnreadNotificationsCount(): number {
+    return this.notifications.filter(
+      n => !n.read
+    ).length;
+  }
+
+  markNotificationRead(
+    id: string
+  ): void {
+    const n =
+      this.notifications.find(
+        item => item.id === id
+      );
+
+    if (n) {
+      n.read = true;
+      this.persist();
     }
+  }
+
+  markAllNotificationsRead(): void {
+    this.notifications.forEach(
+      n => {
+        n.read = true;
+      }
+    );
+
+    this.persist();
   }
 }
 
